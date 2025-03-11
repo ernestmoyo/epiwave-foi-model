@@ -1,0 +1,153 @@
+---
+title: "EpiWave FOI Model"
+author: "Ernest Moyo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The **EpiWave FOI Model** estimates **Force of Infection (FOI)** using **Bayesian inference** and **mechanistic transmission models**. It integrates malaria vector data for malaria risk mapping, forming initital stages (**version 1.0**) of **Ernest Moyo’s PhD research** at **NM-AIST and Vector Atlas**.
+
+# Load Required Libraries
+
+```{r}
+# Install missing packages
+list.of.packages <- c("deSolve", "dplyr", "sp", "gstat", "ggplot2", "greta", "rootSolve")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+# Load libraries
+library(deSolve)
+library(dplyr)
+library(sp)
+library(gstat)
+library(ggplot2)
+library(greta)
+library(rootSolve)
+```
+
+# 1. Generate Synthetic Data
+
+```{r}
+set.seed(123)
+n_locations <- 30
+locs <- data.frame(
+  id = 1:n_locations,
+  lon = runif(n_locations, 30, 35),  # Tanzania range
+  lat = runif(n_locations, -5, 0),
+  population = rpois(n_locations, lambda = 1000),
+  vector_index = runif(n_locations, 0.1, 1.0),
+  ITN_coverage = runif(n_locations, 0, 1),
+  observed_cases = rpois(n_locations, 10),
+  observed_prevalence = runif(n_locations, 0, 0.2)
+)
+```
+
+# 2. Ross-Macdonald Transmission Model
+
+```{r}
+ross_macdonald <- function(t, state, parameters) {
+  with(as.list(c(state, parameters)), {
+    dx <- m*a*b*z*(1 - x) - r*x
+    dz <- a*c*x*(1 - z) - g*z
+    return(list(c(dx, dz)))
+  })
+}
+
+params <- c(m = 10, a = 0.3, b = 0.5, c = 0.5, r = 0.1, g = 0.2)
+init_state <- c(x = 0.01, z = 0.01)
+times <- seq(0, 100, by = 1)
+out_ODE <- ode(y = init_state, times = times, func = ross_macdonald, parms = params)
+out_ODE_df <- as.data.frame(out_ODE)
+```
+
+# 3. Mapping Spatial Covariates to Transmission Parameters
+
+```{r}
+map_parameters <- function(vector_index, itn) {
+  list(
+    m = 5 + 20 * vector_index,
+    a = 0.4 * (1 - itn),
+    b = 0.5,
+    c = 0.5,
+    r = 0.1,
+    g = 0.2 + 0.3 * itn
+  )
+}
+
+locs <- locs %>%
+  rowwise() %>%
+  mutate(param_list = list(map_parameters(vector_index, ITN_coverage)),
+         m = param_list$m, a = param_list$a, b = param_list$b,
+         c = param_list$c, r = param_list$r, g = param_list$g) %>%
+  ungroup()
+```
+
+# 4. Compute FOI (Force of Infection)
+
+```{r}
+equilibrium_prez <- function(params) {
+  eq_fn <- function(vars) {
+    x <- vars[1]
+    z <- vars[2]
+    with(as.list(params), {
+      eq1 <- m*a*b*z*(1 - x) - r*x
+      eq2 <- a*c*x*(1 - z) - g*z
+      c(eq1, eq2)
+    })
+  }
+  multiroot(eq_fn, start = c(0.01, 0.01))$root
+}
+
+locs <- locs %>%
+  rowwise() %>%
+  mutate(eq = list(equilibrium_prez(params = c(m = m, a = a, b = b, c = c, r = r, g = g))),
+         x_eq = eq[1],
+         z_eq = eq[2],
+         FOI = m * a * b * eq[2]) %>%
+  ungroup()
+```
+
+# 5. Spatial Smoothing with Kriging
+
+```{r}
+coordinates(locs) <- ~lon+lat
+locs$log_FOI <- log(pmax(locs$FOI, 1e-9))
+vg <- variogram(log_FOI ~ 1, data = locs)
+vg_fit <- fit.variogram(vg, model = vgm("Exp"))
+krig_res <- krige(log_FOI ~ 1, locations = locs, newdata = locs, model = vg_fit)
+locs$FOI_refined <- exp(krig_res$var1.pred)
+```
+
+# 6. Bayesian Inference with Greta
+
+```{r}
+pop <- locs$population
+obs_cases <- locs$observed_cases
+lambda <- normal(0, 10, truncation = c(0, Inf))
+mean_cases <- lambda * pop
+distribution(obs_cases) <- poisson(mean_cases)
+m <- model(lambda)
+draws <- mcmc(m, n_samples = 2000, warmup = 500, chains = 2)
+plot(draws)
+```
+
+# 7. Visualization
+
+```{r}
+ggplot(locs, aes(x = lon, y = lat)) +
+  geom_point(aes(size = FOI_refined)) +
+  labs(title = "Refined FOI (Gaussian Process)", x = "Longitude", y = "Latitude", size = "FOI") +
+  theme_minimal()
+```
+
+# Conclusion
+
+This model is part of **Ernest Moyo’s PhD research**, aiming to develop **high-resolution malaria risk maps** integrating **vector species distributions**. Future work includes: - **Real-world data integration** with data from **Vector Atlas Database, Mosquito DB and NMCP data**. - **Advanced spatiotemporal Bayesian models**. - **Validation using Tanzanian malaria surveillance data**. - **Scaling to a Pan-African framework**.
+
+For questions, contact **Ernest Moyo**.
