@@ -2,118 +2,96 @@
 
 ## Overview
 
-The **EpiWave FOI Model** is an epidemiological modeling framework designed to estimate the **Force of Infection (FOI)** in a spatial context using **Bayesian inference** and **mechanistic transmission models**. This script demonstrates:
+The **EpiWave FOI Model** provides a structured approach for estimating the **Force of Infection (FOI)** using mechanistic transmission models integrated with Bayesian inference and spatial modeling techniques. This approach facilitates enhanced malaria transmission predictions and informs targeted malaria control strategies.
 
--   **Synthetic data generation** for spatial locations and malaria transmission covariates.
--   **Ross-Macdonald model** for malaria transmission dynamics.
--   **Mapping spatial covariates** to transmission parameters.
--   **FOI estimation** using mechanistic models and spatial statistical techniques (kriging).
--   **Bayesian inference with Greta** to refine FOI estimates.
+This document presents the mathematical foundations and workflow clearly without embedding R code, highlighting the model’s theoretical underpinnings aligned with Ernest Moyo’s PhD research at NM-AIST and Vector Atlas, focusing on integrating vector data into malaria risk mapping in Tanzania.
 
-This model is an initial **version 1.0** being developed as part of **Ernest Moyo’s PhD research** at the **School of Computational and Communication Science and Engineering** under **NM-AIST** and **Vector Atlas**, focusing on integrating **malaria vector data into risk mapping approaches** in **Tanzania**.
+## Mathematical Formulations
 
-## Authors
+### Ross-Macdonald Transmission Dynamics
 
--   **Ernest Moyo**
--   **Date:** 2025-03-11
+The Ross-Macdonald model describes malaria transmission between humans and mosquitoes through the following system of ordinary differential equations (ODEs):
 
-## Dependencies
+$$
+\frac{dx}{dt} = m \cdot a \cdot b \cdot z \cdot (1 - x) - r \cdot x
+$$
 
-The script requires the following R packages:
+$$
+\frac{dz}{dt} = a \cdot c \cdot x \cdot (1 - z) - g \cdot z
+$$
 
-``` r
-install.packages(c("deSolve", "dplyr", "sp", "gstat", "ggplot2", "greta", "rootSolve"))
-```
+Where:
 
-Load them in R:
+-   $x$ = Proportion of infected humans
+-   $z$ = Proportion of infected mosquitoes
+-   $m$ = Mosquito abundance relative to humans
+-   $a$ = Human biting rate by mosquitoes
+-   $b$ = Probability of transmission from mosquito to human per bite
+-   $c$ = Probability of transmission from human to mosquito per bite
+-   $r$ = Human recovery rate (inverse of infection duration)
+-   $g$ = Mosquito death rate (inverse of mosquito lifespan)
 
-``` r
-library(deSolve)    # Solving ODEs
-library(dplyr)      # Data wrangling
-library(sp)         # Spatial data handling
-library(gstat)      # Kriging and spatial statistics
-library(ggplot2)    # Data visualization
-library(greta)      # Bayesian inference
-library(rootSolve)  # Solving equilibrium equations
-```
+### Bayesian Integration of Spatial Covariates
 
-## Workflow
+The mosquito abundance parameter $m$ is modeled spatially through Bayesian inference, integrating covariates ($X$):
 
-### 1. **Synthetic Data Generation**
+$$
+\log(m) = \alpha + \beta \cdot X
+$$
 
--   Generates a grid of **30 spatial locations** in **Tanzania**.
--   Assigns synthetic values for **population, mosquito abundance, and ITN coverage**.
--   Creates synthetic **disease data** (observed cases and prevalence).
+-   $\alpha$ = Intercept parameter (prior: normal distribution)
+-   $\beta$ = Covariate effect (positive constraint)
 
-### 2. **Ross-Macdonald Transmission Model**
+### Force of Infection (FOI) Estimation
 
--   Models malaria transmission using a **two-equation ODE system**:
+The FOI, representing the rate at which susceptible individuals become infected, is estimated as:
 
-    $$\frac{dx}{dt} = m a b z (1 - x) - r x$$ $$\frac{dz}{dt} = a c x (1 - z) - g z$$
+$$
+\xi = m \cdot a \cdot b \cdot z
+$$
 
--   Solves the ODE system using **deSolve**.
+A Gaussian Process (GP) is used to model the residual spatial-temporal variability:
 
-### 3. **Mapping Spatial Covariates to Transmission Parameters**
+$$
+\log(\xi) = \log(m \cdot a \cdot b \cdot z) + \epsilon
+$$
 
--   Assigns transmission parameters ($m, a, r, g$) using **vector index and ITN coverage**.
--   Creates a **spatially heterogeneous transmission model**.
+Where $\epsilon \sim GP(0, K)$, with $K$ being a radial basis function (RBF) kernel.
 
-### 4. **Force of Infection (FOI) Estimation**
+### Bayesian Hierarchical Model for Observed Cases
 
--   Computes **FOI**: $FOI = m a b z$
--   Uses **rootSolve** to find **equilibrium solutions** for malaria prevalence.
--   Estimates **spatially varying FOI** for each location.
+Observed malaria cases ($C_{lt}$) in each location are modeled with a Poisson distribution:
 
-### 5. **Spatial Smoothing with Gaussian Process (Kriging)**
+$$
+C_{lt} \sim \text{Poisson}(\gamma \cdot I_{lt})
+$$
 
--   Uses **variogram analysis** and **kriging** to smooth FOI estimates.
--   Creates a refined spatial prediction of FOI.
+Where:
 
-### 6. **Bayesian Inference with Greta**
+-   $\gamma$ = Symptomatic rate
+-   $I_{lt}$ = Total infected individuals estimated through FOI $\xi$
 
--   Defines a **hierarchical Bayesian model** linking observed cases to FOI.
--   Uses **MCMC sampling** to infer transmission parameters.
+## Workflow Summary
 
-### 7. **Visualization & Outputs**
+The modeling workflow includes:
 
--   Plots **FOI estimates** across locations.
--   Compares **observed vs. predicted cases**.
--   Generates **spatial maps of FOI** using kriging.
+1.  **Data Preparation**: Collect and integrate spatial data on vectors, environmental covariates, and malaria incidence.
+2.  **Parameter Estimation**: Utilize Bayesian inference to estimate model parameters.
+3.  **Dynamic Modeling**: Simulate the Ross-Macdonald ODE system iteratively.
+4.  **FOI Calculation**: Estimate the spatial-temporal distribution of FOI incorporating Gaussian Processes.
+5.  **Case Simulation and Validation**: Generate predictive distributions for malaria cases and validate using field data.
 
 ## Future Enhancements
 
-This model is in the **early stages** of development for **Ernest Moyo’s PhD research**, which aims to create a **high-resolution malaria risk mapping framework**. Future enhancements will be closely tied to the objectives of this work:
+-   Integration of comprehensive real-world data from: **Vector Atlas, MosquitoDB & NMCP** .
+-   Development of advanced spatial-temporal Bayesian hierarchical models.
+-   Rigorous validation using Tanzanian epidemiological and entomological datasets.
+-   Creation of interactive decision-support dashboards for policy makers.
+-   Expansion and standardization of the modeling approach for broader Pan-African implementation.
 
-1.  **Integration with Real-World Vector Atlas Data**
-    -   Replace synthetic spatial data with **actual entomological surveillance datasets**.
-    -   Incorporate **species-specific vector data** to refine parameter estimates.
-2.  **Advanced Spatial Bayesian Modeling**
-    -   Develop a **spatiotemporal Bayesian hierarchical model** to capture malaria transmission dynamics more accurately.
-    -   Improve uncertainty quantification using **prior knowledge from surveillance programs**.
-3.  **Refining Force of Infection Estimation**
-    -   Develop a more **mechanistically informed FOI model**, linking **mosquito dynamics, climatic factors, and intervention effects**.
-    -   Compare different FOI estimation approaches (e.g., direct ODE solutions vs. Gaussian processes).
-4.  **Model Validation & Application in Tanzania**
-    -   Use **high-resolution Tanzanian malaria surveillance data** for calibration.
-    -   Validate the framework against **field-collected epidemiological data**.
-    -   Test intervention **impact scenarios** (e.g., ITN and IRS scale-up).
-5.  **Stakeholder Engagement & Policy Integration**
-    -   Work with **NMCPs and Vector Control Programs** to integrate findings into operational decision-making.
-    -   Develop an **interactive dashboard** to visualize **FOI predictions and risk maps**.
-6.  **Scaling Up the Model for Pan-African Use**
-    -   Extend the framework beyond Tanzania to **other malaria-endemic African countries**.
-    -   Standardize methodologies for **vector-integrated malaria risk mapping**.
+## Author and Contact
 
-## Usage
+**Ernest Moyo**
 
-Run the script in R:
-
-``` r
-source("EpiWave_FOI_Model.R")
-```
-
-Expected outputs: - Synthetic spatial dataset preview. - ODE solution for the **Ross-Macdonald model**. - Parameter mapping based on covariates. - FOI estimation results. - Bayesian parameter inference summary. - Plots of FOI estimates and spatial distribution.
-
-## Contact
-
-For questions or contributions, please reach out to **Ernest Moyo**.
+-   **Date:** 2025-03-14
+-   **Email:** `ernestmoyo35@gmail.com | moyoe@nm-aist.ac.tz`
