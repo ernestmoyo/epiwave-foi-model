@@ -1,12 +1,12 @@
 # Integrated Malaria Transmission Model in R
 
-# Libraries
+# Load Required Libraries
 library(greta)
 library(greta.dynamics)
 library(greta.gp)
 library(ggplot2)
 
-# Ross-McDonald Differential Equations
+# Ross-Macdonald Differential Equations
 dx_dt <- function(x, z, m, a, b, r) {
   m * a * b * z * (1 - x) - r * x
 }
@@ -84,8 +84,8 @@ simulate_integrated_malaria_model <- function(n_days = 365, n_sims = 100, X_cova
   # Calculate simulations
   sims <- calculate(x, z, xi, C_lt, nsim = n_sims)
 
-  # Plot results
-  par(mfrow=c(4,1))
+  # Adjust plot parameters
+  par(mfrow = c(4, 1), mar = c(4, 4, 2, 1))
 
   plot(sims$x[1,1,], type='n', ylim=c(0,1), main="Humans Infected (x)", ylab="Proportion infected", xlab="Day")
   for(i in 1:n_sims) lines(sims$x[i,1,])
