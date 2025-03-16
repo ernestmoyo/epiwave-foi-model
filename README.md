@@ -4,7 +4,7 @@
 
 The **EpiWave FOI Model** provides a structured approach for estimating the **Force of Infection (FOI)** using mechanistic transmission models integrated with Bayesian inference and spatial modeling techniques. This approach facilitates enhanced malaria transmission predictions and informs targeted malaria control strategies.
 
-This document presents the mathematical foundations and workflow clearly without embedding R code, highlighting the model’s theoretical underpinnings aligned with Ernest Moyo’s PhD research at NM-AIST and Vector Atlas, focusing on integrating vector data into malaria risk mapping in Tanzania.
+This document presents the mathematical foundations and workflow clearly without embedding R code, highlighting the model’s theoretical underpinnings in partial fulfillment of Ernest Moyo’s PhD research at NM-AIST and Vector Atlas, focusing on integrating vector data into malaria risk mapping in Tanzania.
 
 ## Mathematical Formulations
 
