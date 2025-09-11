@@ -1,71 +1,107 @@
+# =========================================================
+# Ross–Macdonald model in greta + greta.dynamics (end-to-end)
+# =========================================================
 
 # ---- Packages ----
 library(greta)
 library(greta.dynamics)
 
-# ---- Ross–Macdonald ODEs (vectorised-friendly for greta) ----
-dx_dt <- function(x, z, m, a, b, r) {
-  m * a * b * z * (1 - x) - r * x
-}
+# ---------------------------------------------------------
+# 1) Define the ODE right-hand sides (same equations as yours)
+#    dx/dt and dz/dt are *deterministic* functions we’ll use
+#    inside a simple Euler transition for greta.dynamics
+# ---------------------------------------------------------
+dx_dt <- function(x, z, m, a, b, r) m * a * b * z * (1 - x) - r * x
+dz_dt <- function(x, z, a, c, g)   a * c * x * (1 - z) - g * z
 
-dz_dt <- function(x, z, a, c, g) {
-  a * c * x * (1 - z) - g * z
-}
+# ---------------------------------------------------------
+# 2) Constants as greta data (so they become greta arrays)
+#    This mirrors your plain-R parameter choices
+# ---------------------------------------------------------
+m  <- as_data(100)      # mosquitoes per person
+a  <- as_data(0.1)      # bites per mosquito per day
+b  <- as_data(0.9)      # transmission: mosquito -> human
+r  <- as_data(1 / 21)   # human recovery (1/duration)
+c  <- as_data(0.9)      # transmission: human -> mosquito
+g  <- as_data(1 / 21)   # mosquito loss rate (1/lifespan)
+dt <- as_data(0.1)      # Euler step (days)
 
-# ---- Constants as greta data (deterministic) ----
-m  <- as_data(100)
-a  <- as_data(0.1)
-b  <- as_data(0.9)
-r  <- as_data(1 / 21)   # human mean infectious duration = 21 days
-c  <- as_data(0.9)
-g  <- as_data(1 / 21)   # mosquito lifespan = 21 days
-dt <- as_data(0.1)
+# Initial conditions (as greta arrays)
+x_init <- as_data(0.02)   # fraction humans infected at t0
+z_init <- as_data(0.001)  # fraction mosquitoes infected at t0
 
-x_init <- as_data(0.02)
-z_init <- as_data(0.001)
-
-# ---- Time grid & steps ----
+# ---------------------------------------------------------
+# 3) Time grid (kept in base R for indexing/plotting)
+# ---------------------------------------------------------
 t_max  <- 365
-t      <- seq(0, t_max, by = as.numeric(dt))
-n_step <- length(t) - 1  # number of Euler steps
+t_seq  <- seq(0, t_max, by = as.numeric(dt))  # numeric time vector
+n_step <- length(t_seq) - 1                   # number of Euler steps
 
-# ---- Euler transition function for greta.dynamics ----
-euler_step <- function(state, m, a, b, c, r, g, dt) {
+# ---------------------------------------------------------
+# 4) Define an Euler transition compatible with greta.dynamics
+#    NOTE: signature must include `state` and `iter`.
+#    Return the *next* state as a length-2 vector (x_next, z_next).
+# ---------------------------------------------------------
+euler_step <- function(state, m, a, b, c, r, g, dt, iter) {
+  # unpack current state
   x <- state[1]
   z <- state[2]
+  # one Euler step for each state component
   x_next <- x + dx_dt(x, z, m, a, b, r) * dt
-  z_next <- z + dz_dt(x, z, a, c, g) * dt
+  z_next <- z + dz_dt(x, z, a, c, g)   * dt
   c(x_next, z_next)
 }
 
-# ---- Run the dynamics ----
+# ---------------------------------------------------------
+# 5) Run the deterministic dynamics with greta.dynamics
+#    iterate_dynamic_function builds a *greta graph* that
+#    carries the full trajectory as greta arrays.
+#    tol = 0 keeps it purely deterministic here.
+# ---------------------------------------------------------
 solution <- iterate_dynamic_function(
   transition_function = euler_step,
-  initial_state = c(x_init, z_init),
-  niter = n_step,
-  tol = 0,
+  initial_state = c(x_init, z_init),  # 2-vector (x0, z0)
+  niter = n_step,                     # number of steps
+  tol   = 0,                          # deterministic
   m = m, a = a, b = b, c = c, r = r, g = g, dt = dt
 )
 
-# Extract latent state time series (greta arrays)
-x_ts <- solution$all_states[1, ]  # length n_step + 1 (includes initial state)
-z_ts <- solution$all_states[2, ]
+# `solution$all_states` is a 2 x (n_step + 1) greta array: [row 1 = x(t), row 2 = z(t)]
+x_ts_greta <- solution$all_states[1, ]           # greta array (length n_step+1)
+z_ts_greta <- solution$all_states[2, ]           # greta array (length n_step+1)
 
-# ---- Evaluate to numeric (deterministic calculate) ----
-sim <- calculate(x_ts, z_ts)
+# ---------------------------------------------------------
+# 6) Evaluate greta arrays to numeric with calculate()
+#    calculate() returns a list; we name the elements for clarity.
+# ---------------------------------------------------------
+sim_vals <- calculate(list(x = x_ts_greta, z = z_ts_greta))
+x_num <- as.numeric(sim_vals$x)   # numeric vector for plotting/use
+z_num <- as.numeric(sim_vals$z)
 
-x_num <- as.numeric(sim$x_ts[1, 1, ])  # drop greta dims
-z_num <- as.numeric(sim$z_ts[1, 1, ])
+# ---------------------------------------------------------
+# 7) Quick checks analogous to your plain-R snippets
+# ---------------------------------------------------------
+# instantaneous rates at t0 (should match your dx_dt/dz_dt at init)
+dx0 <- dx_dt(x = as.numeric(x_init), z = as.numeric(z_init), m = as.numeric(m),
+             a = as.numeric(a), b = as.numeric(b), r = as.numeric(r))
+dz0 <- dz_dt(x = as.numeric(x_init), z = as.numeric(z_init),
+             a = as.numeric(a), c = as.numeric(c), g = as.numeric(g))
+cat("dx/dt at t0:", dx0, "\n")
+cat("dz/dt at t0:", dz0, "\n")
 
-# ---- Plot (should match your base-R Euler loop) ----
+# one-step-ahead (dt = 0.1 day) expectation by formula vs greta trajectory
+x_next_formula <- as.numeric(x_init) + dx0 * as.numeric(dt)
+z_next_formula <- as.numeric(z_init) + dz0 * as.numeric(dt)
+cat("x(t0 + dt) formula:", x_next_formula, " | greta:", x_num[2], "\n")
+cat("z(t0 + dt) formula:", z_next_formula, " | greta:", z_num[2], "\n")
+
+# ---------------------------------------------------------
+# 8) Plot trajectories
+# ---------------------------------------------------------
 op <- par(mfrow = c(1, 2))
-plot(t, x_num, type = "l", xlab = "time (days)", ylab = "x (humans infected)")
-plot(t, z_num, type = "l", xlab = "time (days)", ylab = "z (mosquitoes infected)")
+plot(t_seq, x_num, type = "l", xlab = "time (days)", ylab = "x (humans infected)",
+     main = "Humans (x) via greta.dynamics")
+plot(t_seq, z_num, type = "l", xlab = "time (days)", ylab = "z (mosquitoes infected)",
+     main = "Mosquitoes (z) via greta.dynamics")
 par(op)
-```
 
-### Notes
-
-# This is **deterministic**: we pass constants with `as_data()` and don’t put priors/likelihoods, so `calculate()` just evaluates the graph (no sampling).
-# If you saw the earlier error about TensorFlow `2.16.0` vs `2.20.0`, align your TF runtime to **2.16.x** for current `greta` releases before running this.
-# You can now layer a stochastic observation model on top (e.g., `poisson` likelihood on cases) without changing the dynamics block.
