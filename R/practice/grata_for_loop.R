@@ -74,7 +74,7 @@ z_ts_greta <- solution$all_states[2, ]           # greta array (length n_step+1)
 # 6) Evaluate greta arrays to numeric with calculate()
 #    calculate() returns a list; we name the elements for clarity.
 # ---------------------------------------------------------
-sim_vals <- calculate(list(x = x_ts_greta, z = z_ts_greta))
+sim_vals <- calculate(x_ts_greta, z_ts_greta, nsim = 1)
 x_num <- as.numeric(sim_vals$x)   # numeric vector for plotting/use
 z_num <- as.numeric(sim_vals$z)
 
