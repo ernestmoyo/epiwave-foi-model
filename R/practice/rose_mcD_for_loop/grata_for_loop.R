@@ -33,7 +33,7 @@ z_init <- as_data(0.001)  # fraction mosquitoes infected at t0
 # ---------------------------------------------------------
 # 3) Time grid (kept in base R for indexing/plotting)
 # ---------------------------------------------------------
-t_max  <- 365
+t_max  <- 10
 t_seq  <- seq(0, t_max, by = as.numeric(dt))  # numeric time vector
 n_step <- length(t_seq) - 1                   # number of Euler steps
 
@@ -99,9 +99,9 @@ cat("z(t0 + dt) formula:", z_next_formula, " | greta:", z_num[2], "\n")
 # 8) Plot trajectories
 # ---------------------------------------------------------
 op <- par(mfrow = c(1, 2))
-plot(t_seq, x_num, type = "l", xlab = "time (days)", ylab = "x (humans infected)",
+plot(t_seq[-1], x_num, type = "l", xlab = "time (days)", ylab = "x (humans infected)",
      main = "Humans (x) via greta.dynamics")
-plot(t_seq, z_num, type = "l", xlab = "time (days)", ylab = "z (mosquitoes infected)",
+plot(t_seq[-1], z_num, type = "l", xlab = "time (days)", ylab = "z (mosquitoes infected)",
      main = "Mosquitoes (z) via greta.dynamics")
 par(op)
 

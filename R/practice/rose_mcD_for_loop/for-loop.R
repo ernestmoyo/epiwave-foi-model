@@ -44,7 +44,7 @@ x_in_two_days <- x_init + 2 * dx_dt(x = x_init, z = z_init, m = m, a = a, b = b,
 x_in_0.1_days <- x_init + 0.1 * dx_dt(x = x_init, z = z_init, m = m, a = a, b = b, r = r)
 
 
-t_max <- 365
+t_max <- 10
 dt <- 0.1
 t <- seq(0, t_max, by = dt)
 n_t <- length(t)
