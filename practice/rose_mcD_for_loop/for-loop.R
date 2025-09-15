@@ -48,6 +48,8 @@ t_max <- 10
 dt <- 0.1
 t <- seq(0, t_max, by = dt)
 n_t <- length(t)
+m <- 8 + (100 - 8)*(t/t_max) # in general this has to be close to a sine graph (this illustrative ie a linear ramp)
+
 x <- rep(NA, n_t)
 z <- rep(NA, n_t)
 x[1] <- x_init
@@ -55,7 +57,7 @@ z[1] <- z_init
 for(i in 2:n_t) {
   x[i] <- x[i - 1] + dx_dt(x = x[i - 1],
                            z = z[i - 1],
-                           m = m,
+                           m = m[i - 1],
                            a = a,
                            b = b,
                            r = r) * dt

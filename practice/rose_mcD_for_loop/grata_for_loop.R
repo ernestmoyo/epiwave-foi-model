@@ -38,16 +38,25 @@ t_seq  <- seq(0, t_max, by = as.numeric(dt))  # numeric time vector
 n_step <- length(t_seq) - 1                   # number of Euler steps
 
 # ---------------------------------------------------------
+# 3.1) Adding a simple time varying m
+# ---------------------------------------------------------
+m_vec_base <- 8 + (100 - 8) * (t_seq / t_max) # linear ramp
+
+# pass to greta as data (vector length = length(t_seq))
+m_vec <- as_data(m_vec_base)
+
+
+# ---------------------------------------------------------
 # 4) Define an Euler transition compatible with greta.dynamics
 #    NOTE: signature must include `state` and `iter`.
 #    Return the *next* state as a length-2 vector (x_next, z_next).
 # ---------------------------------------------------------
-euler_step <- function(state, m, a, b, c, r, g, dt, iter) {
+euler_step <- function(state, iter, m_vec, a, b, c, r, g, dt) {
   # unpack current state
   x <- state[1]
   z <- state[2]
   # one Euler step for each state component
-  x_next <- x + dx_dt(x, z, m, a, b, r) * dt
+  x_next <- x + dx_dt(x, z, m_vec, a, b, r) * dt
   z_next <- z + dz_dt(x, z, a, c, g)   * dt
   c(x_next, z_next)
 }
@@ -63,7 +72,8 @@ solution <- iterate_dynamic_function(
   initial_state = c(x_init, z_init),  # 2-vector (x0, z0)
   niter = n_step,                     # number of steps
   tol   = 0,                          # deterministic
-  m = m, a = a, b = b, c = c, r = r, g = g, dt = dt
+  m_vec = m_vec, a = a, b = b, c = c, r = r, g = g, dt = dt,
+  parameter_is_time_varying = "m_vec"
 )
 
 # `solution$all_states` is a 2 x (n_step + 1) greta array: [row 1 = x(t), row 2 = z(t)]
