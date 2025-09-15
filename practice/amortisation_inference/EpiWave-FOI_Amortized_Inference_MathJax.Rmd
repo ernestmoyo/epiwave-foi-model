@@ -1,0 +1,115 @@
+---
+title: "EpiWave-FOI: Amortized Inference (Alternative Pathway)"
+author: "Ernest Moyo"
+date: "2025-09-15"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    mathjax: "default"
+---
+
+# 1. Why this note exists
+Amortized inference is an alternative to slow, sequential MCMC for ODE-based malaria models. The idea: **pay** the simulation/training cost **up-front**, then do **fast, repeated** inference across many pixels/times once a neural network has learned to invert the model. This could be crucial for pixel-level, national-scale EpiWave-FOI runs.
+
+# 2. Core setup (shared notation)
+
+- Parameters: $\Theta = \{m, a, b, c, r, g\}$  
+- ODE solver (Ross–Macdonald): $(x,z) = \mathcal{S}(\Theta, t)$  
+- Mapping states → data space (FOI/incidence link): $\hat y = g(x,z)$  
+- Observation model: $y \sim \mathcal{T}_y(\hat y)$ (e.g., Poisson or NegBin)  
+- Prior over parameters: $\Theta \sim \Pi_\Theta$  
+
+This defines the **generative model** against which all inference strategies operate.
+
+# 3. Conventional Bayesian route (for reference)
+
+**Generative story**
+
+$$
+\Theta \sim \Pi_\Theta,\quad
+(x,z)=\mathcal{S}(\Theta,t),\quad
+\hat y=g(x,z),\quad
+y \sim \mathcal{T}_y(\hat y).
+$$
+
+**Posterior target**
+
+$$
+p(\Theta \mid y) \propto p(y \mid \Theta)\, p(\Theta), \quad
+p(y\mid \Theta) = \mathcal{T}_y\!\big(y \,\big|\, g(\mathcal{S}(\Theta,t))\big).
+$$
+
+- Pros: principled uncertainty; familiar diagnostics.  
+- Cons: **sequential** (MCMC/SMC), slow at national/pixel scale.
+
+# 4. Two ML-assisted alternatives
+
+## 4.1 Emulator (forward surrogate)
+Train a network to approximate the **forward map**:
+$$
+\text{NN}_{\text{emu}}:\ \Theta \mapsto \hat y \approx g(\mathcal{S}(\Theta,t)).
+$$
+Use inside MCMC to speed up likelihood evaluations.
+
+- Pros: retains Bayesian machinery; faster forward calls.  
+- Cons: still sequential; needs emulator validation.
+
+## 4.2 Amortized inference (inverse surrogate)
+Train a network to approximate the **inverse map**:
+$$
+\text{NN}_{\text{amort}}:\ y \mapsto \Theta \ \text{(point or distributional output)}.
+$$
+
+**Training library (simulation):**
+1. Sample $\Theta^{(i)} \sim \Pi_\Theta$.
+2. Solve ODE: $(x^{(i)},z^{(i)})=\mathcal{S}(\Theta^{(i)},t)$.
+3. Map to data: $\hat y^{(i)}=g(x^{(i)},z^{(i)})$.
+4. Sample observations: $y^{(i)}\sim \mathcal{T}_y(\hat y^{(i)})$.
+5. Train $\text{NN}_{\text{amort}}$ on pairs $(y^{(i)},\Theta^{(i)})$ to learn $p(\Theta\mid y)$ (e.g., via distributional outputs or normalizing flows).
+
+**Deployment:** once trained, apply per pixel/district quickly—**cost is amortized**.
+
+- Pros: very fast repeated inference; ideal for pixel-dense EpiWave-FOI maps.  
+- Cons: posterior is learned—**must** check calibration and robustness.
+
+# 5. Solver considerations (still matter for amortization)
+Amortization depends on generating many simulations efficiently and accurately.
+
+- **Fixed-step, higher-order**: RK4 is a robust default.  
+- **Adaptive step** (e.g., Dormand–Prince): concentrates steps where dynamics change quickly; tune tolerances to preserve seasonal features.
+
+**Practical tip:** benchmark RK4 vs an adaptive solver on seasonal regimes you expect; pick the fastest solver that preserves FOI/case features you condition on.
+
+# 6. Decision guide (when to use what)
+
+- Need thousands of per-pixel fits, repeatedly → **Amortized inference**.  
+- Want exact Bayes but faster forward calls → **Emulator + MCMC**.  
+- Small scale, early prototyping, or high-stakes uncertainty audits → **Conventional Bayes**.
+
+# 7. Minimal validation plan
+
+1. **Synthetic recovery:** simulate $(\Theta,y)$; verify the method recovers $\Theta$.  
+2. **Coverage calibration:** 90% intervals should cover ≈90% of truths across regimes.  
+3. **Runtime profiling:** compare wall-clock for (a) ODE+MCMC, (b) Emulator+MCMC, (c) Amortized.  
+4. **Robustness:** stress test with varied seasonality, biting rates, recovery; check stability of inferences.
+
+# 8. Integration hooks for EpiWave-FOI
+
+- **Simulator harness:** sample $\Theta$ → ODE solve → $\hat y$ → draw $y$ → save $(y,\Theta)$ at chosen temporal resolution (e.g., monthly).  
+- **Feature choice:** either full time series per pixel or compact summaries (peaks, ACF, seasonal amplitude/phase).  
+- **NN head:** distributional outputs (mean+scale per parameter, or flows) to represent $p(\Theta\mid y)$.  
+- **Calibration loop:** synthetic → small real slices (selected Tanzanian districts) → national grid.
+
+# 9. Risks & mitigations
+
+- **Model–data mismatch:** the learned inverse reflects your simulator.  
+  *Mitigate:* include realistic stochasticity/seasonality; validate on held-out real slices.  
+- **Generalization:** network trained on one regime may underperform elsewhere.  
+  *Mitigate:* broaden priors/regimes; domain-shift checks.  
+- **Compute burn (training):** simulation heavy.  
+  *Mitigate:* vectorized batches; fast solvers; start small, scale after calibration passes.
+
+---
+*No code included by design; this is a conceptual pathway note to sit alongside the EpiWave-FOI model overview and solver benchmarking docs.*
