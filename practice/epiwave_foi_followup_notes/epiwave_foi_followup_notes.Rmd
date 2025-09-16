@@ -1,0 +1,65 @@
+---
+title: "EpiWave‑FOI Model – Follow‑Up Meeting Notes"
+author: "Ernest Moyo"
+date: "2025-09-16"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+# Purpose
+Concise notes from the follow‑up discussion on the **EpiWave FOI Model**. Focus is on **new information and clarifications** that extend the prior overview (Ross–Macdonald ODEs, FOI, Bayesian spatial integration, GP residuals, hierarchical observation model).
+
+# What’s New (Highlights)
+- **Dynamical vs. non‑dynamical models**: We clarified that ODE‑based transmission models **require sequential numerical solving** because of **feedback** (humans ↔ mosquitoes). In contrast, **Gaussian Processes** give closed‑form predictions at any time point (correlation-based) but **do not represent feedback loops**.
+- **Why iteration is required**: For ODEs we approximate trajectories by **stepping through time** using current state → next state updates; there is generally no single closed‑form curve for the full trajectory.
+- **Time‑step (Δt) choice matters**: Smaller Δt improves accuracy but increases compute; fixed small steps are often acceptable, while adaptive steps are ideal when dynamics change rapidly (e.g., onset/ending of rains).
+- **For‑loop structure for solvers**: We write `x[t] = x[t-1] + (dx/dt)|_(t-1) * Δt` (and similarly for `z`)—using the **latest available states**. This ensures the coupled feedback is propagated forward correctly.
+- **Greta interface**: `greta.dynamics::iterate_dynamic()` expects a function like `iterate_state(state, iter, m, a, b, c, r, g, ...)` that **unpacks/updates the state vector** and returns the next state; this bridges R code with Greta’s computational graph for efficient simulation and inference.
+- **Distributions not points**: Running Greta with **priors on parameters** (e.g., positive constraint on β; log‑link for `m`) yields **ensembles of trajectories** rather than a single path—useful for uncertainty maps of FOI.
+- **Policy‑facing metric**: Discussion leaned toward **vector‑driven transmission summaries** (e.g., FOI, vectorial capacity reductions) as interpretable, mappable **impact indicators** for vector control scenarios.
+
+# Clarifications & Agreements
+1. **Feedback is central** to malaria dynamics; this is the main reason we must iterate—GPs alone cannot express it.
+2. **Solver behavior**:
+   - Default to a **daily or sub‑daily Δt**; consider smaller Δt in periods of rapid change (season transitions).
+   - Ensure states remain within **[0, 1]**; numerical stepping can otherwise stray outside bounds if Δt is too large.
+3. **Greta usage**:
+   - Use a dedicated `iterate_state()` that returns the **next** `(x, z)`; pass it to `iterate_dynamic()` with initial states and `n_steps`.
+   - Keep **priors**: `log(m) = α + β·X` with **β ≥ 0**; α ~ Normal(0, σ), β ~ Normal⁺(1, σ), ensuring positivity and interpretability.
+4. **Outputs**:
+   - Produce **FOI rasters** and **case predictions** with uncertainty bands.
+   - Derive **before/after** maps for vector‑control scenarios (e.g., changes in bite rate `a`, mortality `g`, or abundance `m`).
+
+# Open Questions
+- **Adaptive Δt**: Should we implement an **adaptive time‑step** routine within the current pipeline, or fix Δt by seasonality regime?
+- **Equilibrium analytics**: Do we add quick **equilibrium checks** (e.g., thresholds on `m, a, b, c, r, g`) to flag implausible settings before long runs?
+- **Observation model extensions**: Incorporate **reporting rates** and potential **over‑dispersion** (e.g., Negative Binomial) for robustness?
+- **Covariate set for `m`**: Finalize which environmental/vector layers feed `X` (Vector Atlas, MosquitoDB, NMCP) and how to handle multi‑source harmonization.
+- **Communication artefacts**: Confirm the **policy dashboard** KPIs (FOI level, trend, uncertainty, % reduction under interventions) and export formats.
+
+# Action Items
+| Item | Owner | Due | Notes |
+|---|---|---|---|
+| Lock Δt strategy (fixed vs adaptive) and seasonal regimes | Ernest + Supervisors | Next sync | Start with fixed Δt; pilot adaptive in high‑variance zones |
+| Finalize `iterate_state` signature + unit tests | Ernest | Next sprint | Ensure bounds checks keep states ∈ [0,1] |
+| Prior calibration for `log(m)` model | Ernest | Next sprint | β truncated ≥0; α centered at 0; sensitivity to σ |
+| Define covariates `X` and data joins (Vector Atlas, MosquitoDB, NMCP) | Ernest | Ongoing | Track provenance and temporal alignment |
+| Uncertainty products (ensembles → FOI maps) | Ernest | Next sprint | Summaries: mean, median, 50/90% CrI |
+| Policy dashboard spec | Ernest + Stakeholders | Next review | Include before/after intervention deltas |
+
+# Appendix – Technical Notes (New)
+- **State update equations** (Euler stepping):
+
+  - $x_{t} = x_{t-1} + \left.\dfrac{dx}{dt}\right|_{t-1} \cdot \Delta t$
+  - $z_{t} = z_{t-1} + \left.\dfrac{dz}{dt}\right|_{t-1} \cdot \Delta t$
+
+- **Why small Δt**: Large steps can overshoot (e.g., leave [0,1]); smaller steps **track curvature** better, especially around seasonal transitions.
+- **Greta wiring**: `iterate_dynamic()` repeatedly applies your `iterate_state()`; its **first argument is the state vector**, enabling generalization beyond two compartments.
+
+# References to Discussion (internal)
+- Iterative stepping and Δt choice; using latest states for updates.  
+- Interface to `iterate_dynamic()`; returning a combined next‑state vector.  
+- Feedback vs GP clarification and computational trade‑offs.
