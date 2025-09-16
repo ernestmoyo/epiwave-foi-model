@@ -1,0 +1,162 @@
+---
+title: "Writing & Workflow for EpiWave/Vector Papers"
+author: "Ernest Moyo"
+date: "2025-09-15"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+## Purpose
+
+Notes from the discussions focused on **paper‑writing strategy**, **journal targeting**, **collaboration workflow**, and a few **technical/debugging** takeaways.
+
+## What’s New (Highlights)
+
+-   **Where to state the ‘what’s new’ claim:** Put a clear, single‑sentence novelty/USP in (1) the **title or running tagline**, (2) the **abstract**, and (3) the **cover letter to the editor**; optionally (4) emphasize again in the **intro conclusion** (last paragraph) as the problem–gap–contribution pivot.
+-   **Tailor the message to the audience:** For **methods** audiences, emphasize modelling innovation; for **public‑health** audiences, foreground policy‑relevant outputs (e.g., percent of resistance attributable to mechanism X; implications for vector control). The same analysis can be framed differently for different journals and readers.
+-   **Two‑paper strategy when scope is big:** (A) **method paper** (introduces the model and validation), and (B) **application paper** (country‑specific data integration, results, and maps). This reaches distinct audiences and keeps each manuscript focused.
+-   **Introduction structure = funnel:** Start from the broader problem → narrow to the specific gap → end with the clear, one‑sentence contribution; avoid generic biology background that isn’t needed for your argument.
+-   **Citations etiquette:** Cite **primary sources** for results; use **reviews** only for synthesized claims; avoid out‑of‑date citations; mine the **citing network** to find newer work; never paraphrase another paper’s intro as your own.
+-   **Results‑first planning:** Draft a **figure/table list** (the “paper skeleton”) early; write provisional **captions** and key findings before full analysis to drive the pipeline.
+-   **Collaboration tooling:** **Overleaf/LaTeX** excels for math‑heavy teams; **Google Docs/Word** are fine for iterative comments (typical for PhD lead writing); **Quarto/R Markdown** inside a repo is possible but heavier for collaborators not on Git/GitHub.
+
+## Journal Targeting (Guidance)
+
+-   **Public‑health / malaria journals:** Prioritize **impact on control decisions**, clarity of **maps/uncertainty**, and **practical metrics**.
+-   **Methodological / computational biology venues:** Center the **novel model**, **validation**, and **generalizability**.
+-   **High‑profile general journals:** Only when the **method is new *and* the application reveals a surprising result**; otherwise split method & application across suitable outlets.
+
+## Writing the Introduction – Practical Template
+
+1.  **Problem context** (malaria control impact; why vectors/resistance matter).
+2.  **Specific threat or focus** (e.g., new vector, spread, urban/rural differences).
+3.  **What has been tried** (correlative SDMs, mechanistic SDMs, hybrids) → **their limitations** in this setting.
+4.  **Gap** (why existing work is insufficient for your objective).
+5.  **Our contribution in one sentence** (the clear “what’s new” statement).
+
+> **Tip:** Write the intro **without citations first** (to keep logic yours). Then add references to support each statement; use reviews sparingly, and prefer **primary** up‑to‑date papers.
+
+## Novelty/USP – Examples (for inspiration)
+
+-   “**First national‑scale maps** of [X] resistance mechanisms for **[Country/Year]** using [data fusion of entomology + surveillance].”
+-   “**Updated distribution maps** for **[Species]** reflecting **[Year–Year]** expansion with bias‑adjusted reporting and spread dynamics.”
+-   “A **mechanistic–spatial** framework that integrates **vector data** to produce **decision‑ready FOI** surfaces and **uncertainty**.”
+
+## Collaboration & Versioning
+
+-   **PhD lead writing:** You own the primary text; supervisors provide iterative comments (Doc/Word track‑changes is fine).
+-   **Math‑heavy manuscripts:** Overleaf/LaTeX if many equations; otherwise Markdown/Quarto is optional.
+-   **Project management:** Maintain a **paper skeleton** (sections, figure list, TODOs); GitHub issues can track figures/analyses to produce.
+
+## Action Items
+
+| Item | Notes |
+|----|----|
+| Draft single‑sentence novelty/USP for current paper | Reuse in title/abstract/cover letter/intro‑close |
+| Build paper skeleton (section bullets, figure list, captions) | Drives analysis pipeline & coding backlog |
+| Decide journal track (method vs application; PH vs methods) | Split into two manuscripts if scope is large |
+| Refresh citations (primary & recent; citing‑network search) | Replace dated refs; add key reviews only |
+| Data joins & renames audit | Ensure correct `rename()` direction and keys exist |
+
+## Appendix – Reusable Snippets
+
+### Cover‑letter hook (1–2 sentences)
+
+> “This manuscript provides the *first* decision‑ready maps of **[X]** for **[Country/Year]**, integrating entomological surveillance with a mechanistic spatial model. Results directly inform **[intervention choice/targeting]** and quantify **[uncertainty/impact]**.”
+
+### Abstract ‘what’s new’ (1 sentence)
+
+> “We present **[new method/application]** that **[addresses limitation]**, producing **[key output]** that improves **[policy/operational decision]**.”
+
+### Intro last line (gap → contribution)
+
+> “To address this gap, we develop **[method]** and apply it to **[setting]**, yielding **[maps/metrics]** that support **[decision]**.”
+
+## Paper Skeleton (updated example)
+
+### Letter to the Editor
+
+-   One‑sentence novelty/USP (tailored to journal scope).
+-   Why this journal: fit to audience/scope; relevance to malaria/vector control.
+-   2–4 suggested reviewers; 1–2 opposed reviewers (if any) with rationale.
+-   Disclosures: conflicts of interest; preprint status (if applicable).
+
+### Abstract (Structured)
+
+-   **Background:** 1–2 sentences of problem context and gap.
+-   **Methods:** High‑level summary (data sources; mechanistic + spatial/Bayesian modelling).
+-   **Results:** Key quantitative findings and uncertainty.
+-   **Conclusion/Implications:** What this enables for decision‑making.
+-   Include the one‑sentence **“what’s new”** line explicitly.
+
+### Introduction
+
+-   Problem context and burden; why vectors/resistance matter now.
+-   Specific focus (geography/species/period); define objective clearly.
+-   What has been tried (SDMs, mechanistic SDMs, hybrids) → key limitations in this setting.
+-   The gap this paper addresses.
+-   Our contribution (single, crisp sentence): what is new, to whom it matters, and why.
+
+### Methods
+
+-   **Study area & period.**
+-   **Data:** Entomology/vector, epidemiology/cases, environmental covariates; inclusion/exclusion.
+-   **Pre‑processing:** Harmonization, QA/QC, bias correction, temporal alignment.
+-   **Model overview:** Mechanistic transmission block (Ross–Macdonald/FOI), spatial covariates for *m*, GP residuals.
+-   **Inference & priors:** Hierarchical structure, priors/constraints, computation.
+-   **Validation & performance:** Cross‑validation, hold‑outs, predictive checks.
+-   **Sensitivity & robustness:** Parameter sweeps, scenario analyses.
+-   **Software & reproducibility:** Code repo, versioning, packages; data‑use agreements.
+
+### Results
+
+-   **Descriptives:** Data coverage and summary statistics.
+-   **Main figures (indicative):**
+    -   **Map 1:** National FOI surface with uncertainty banding.
+    -   **Figure 2:** Covariate effect sizes (posterior summaries).
+    -   **Figure 3:** Intervention scenarios (before/after deltas).
+-   **Secondary outputs:** Validation tables/metrics; robustness checks.
+-   **Narrative:** Emphasize decision‑relevant contrasts and spatial heterogeneity.
+
+### Discussion
+
+-   Recap: what we did, why it is new/important, and top‑line findings.
+-   Interpretation vs literature: how this compares/extends.
+-   Policy implications: how maps/metrics inform targeting and timing.
+-   Limitations: data gaps, model assumptions, generalizability.
+-   Future work: temporal dynamics, additional vectors, pan‑African scaling.
+
+### Conclusion
+
+-   One paragraph with the key contribution, practical implication, and next step.
+
+### Data & Code Availability
+
+-   Links/placeholders for repositories; access conditions; DOI on release.
+
+### Ethics & Approvals
+
+-   Approvals, data‑sharing permissions, consent (if applicable).
+
+### Funding
+
+-   Grants and institutional support.
+
+### Author Contributions
+
+-   CRediT‑style roles (conceptualization, methodology, analysis, writing, supervision).
+
+### Acknowledgements
+
+-   Collaborators, data providers, institutional partners.
+
+### Competing Interests
+
+-   Statement of any competing interests.
+
+### Supplementary Material
+
+-   Extended methods, additional figures/tables, sensitivity details, robustness checks.

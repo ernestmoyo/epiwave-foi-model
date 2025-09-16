@@ -7,38 +7,55 @@ output:
     toc: true
     toc_depth: 2
     number_sections: true
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 # Overview
 
-These notes consolidate the modelling discussion and sketches into a concise reference for implementing and scaling the Ross–Macdonald malaria transmission model with **time‑varying mosquito abundance** \(m(t)\) and **vectorisation across sites**.
+These notes consolidate the modelling discussion and sketches into a
+concise reference for implementing and scaling the Ross–Macdonald
+malaria transmission model with **time‑varying mosquito abundance**
+$m(t)$ and **vectorisation across sites**.
 
-The focus is on: (1) dynamics under seasonal forcing, (2) discretisation choices for computation, (3) coupling of an external mosquito model (e.g., Jerry’s GLM) to the ODE, and (4) efficient multi‑site implementation in base R and in **greta**/**greta.dynamics**.
+The focus is on: (1) dynamics under seasonal forcing, (2) discretisation
+choices for computation, (3) coupling of an external mosquito model
+(e.g., Jerry’s GLM) to the ODE, and (4) efficient multi‑site
+implementation in base R and in **greta**/**greta.dynamics**.
 
 # Core Dynamical Model
 
-For a single site, human infection proportion \(x(t)\) and infectious mosquito proportion \(z(t)\) follow
+For a single site, human infection proportion $x(t)$ and infectious
+mosquito proportion $z(t)$ follow
 
 $$
 \frac{dx}{dt} = m(t)\,a\,b\,z(t)\,[1-x(t)] - r\,x(t), \qquad
 \frac{dz}{dt} = a\,c\,x(t)\,[1-z(t)] - g\,z(t).
 $$
 
-Parameters (scalars): \(a\) = biting rate, \(b\) = mosquito→human transmission, \(c\) = human→mosquito transmission, \(r\) = human recovery rate, \(g\) = mosquito loss rate. The **forcing** \(m(t)\) is typically **seasonal / time‑varying**.
+Parameters (scalars): $a$ = biting rate, $b$ = mosquito→human
+transmission, $c$ = human→mosquito transmission, $r$ = human recovery
+rate, $g$ = mosquito loss rate. The **forcing** $m(t)$ is typically
+**seasonal / time‑varying**.
 
-## Static vs time‑varying \(m\)
+## Static vs time‑varying $m$
 
-- **Static \(m\):** trajectories tend toward a fixed equilibrium.
-- **Seasonal \(m(t)\):** equilibrium becomes time‑varying; \(x(t)\) **oscillates** and **lags** the moving target.
+-   **Static** $m$: trajectories tend toward a fixed equilibrium.
+-   **Seasonal** $m(t)$: equilibrium becomes time‑varying; $x(t)$
+    **oscillates** and **lags** the moving target.
 
 ### Burn‑in & Initial Conditions
-To reduce dependence on \(x(0)\), either:
-- start the simulation **earlier** than the window of interest (burn‑in), or
-- estimate \(x(0)\) as a parameter.
+
+To reduce dependence on $x(0)$, either: - start the simulation
+**earlier** than the window of interest (burn‑in), or - estimate $x(0)$
+as a parameter.
 
 # Discretisation for Computation
 
-Choose a time grid \(t' = \{0, \Delta t, 2\Delta t, \dots\}\). Evaluate \(m(t)\) on this grid to obtain a vector \(m_{t'}\) with **length equal to the number of solver steps**.
+Choose a time grid $t' = \{0, \Delta t, 2\Delta t, \dots\}$. Evaluate
+$m(t)$ on this grid to obtain a vector $m_{t'}$ with **length equal to
+the number of solver steps**.
 
 **Explicit Euler** update used here:
 
@@ -47,40 +64,51 @@ x_{k+1} = x_k + \Delta t\,\Big[m_k\,a\,b\,z_k(1-x_k) - r\,x_k\Big], \quad
 z_{k+1} = z_k + \Delta t\,\Big[a\,c\,x_k(1-z_k) - g\,z_k\Big].
 $$
 
-> **Implementation tip:** when integrating from \(t_k\to t_{k+1}\), use the matching element **\(m_k\)** (or \(m_{\cdot,k}\) for multi‑site). Ensure all time‑indexed inputs have consistent lengths.
+> **Implementation tip:** when integrating from $t_k\to t_{k+1}$, use
+> the matching element $m_k$ (or $m_{\cdot,k}$ for multi‑site). Ensure
+> all time‑indexed inputs have consistent lengths.
 
 # Coupling an External Mosquito Model
 
-Let \(\hat m_{i,t}\) be the output from an external model (e.g., GLM on mosquito counts). Two pragmatic couplings:
+Let $\hat m_{i,t}$ be the output from an external model (e.g., GLM on
+mosquito counts). Two pragmatic couplings:
 
-- **Option 1: Direct plug‑in** \(m_{i,t} = \hat m_{i,t}\). Simple; assumes correct scale and negligible error.
-- **Option 2: Calibrated link**
-  $$
-  \log m_{i,t} = \alpha + \gamma\,\log \hat m_{i,t},
-  $$
-  with priors (if Bayesian) like \(\gamma \sim \mathcal N^+(1,\sigma^2_\gamma)\), \(\alpha \sim \mathcal N(0,\sigma^2_\alpha)\). This **re‑scales** \(\hat m\) while keeping it informative.
+-   **Option 1: Direct plug‑in** $m_{i,t} = \hat m_{i,t}$. Simple;
+    assumes correct scale and negligible error.
+-   **Option 2: Calibrated link** $$
+    \log m_{i,t} = \alpha + \gamma\,\log \hat m_{i,t},
+    $$ with priors (if Bayesian) like
+    $\gamma \sim \mathcal N^+(1,\sigma^2_\gamma)$,
+    $\alpha \sim \mathcal N(0,\sigma^2_\alpha)$. This **re‑scales**
+    $\hat m$ while keeping it informative.
 
 ### Temporal Resolution Mismatch
-If \(\hat m\) is **monthly** but the solver is **daily/sub‑daily**, build a continuous interpolator (e.g., spline), then evaluate it on the solver grid to create \(m_{t'}\).
+
+If $\hat m$ is **monthly** but the solver is **daily/sub‑daily**, build
+a continuous interpolator (e.g., spline), then evaluate it on the solver
+grid to create $m_{t'}$.
 
 # Space–Time–Samples (“the cube”)
 
-Indexing conventions:
-- Sites \(i = 1,\dots, N\)  
-- Times \(t = 1,\dots, T\)  
-- Samples \(s = 1,\dots, S\) (prior/posterior draws)
+Indexing conventions: - Sites $i = 1,\dots, N$\
+- Times $t = 1,\dots, T$\
+- Samples $s = 1,\dots, S$ (prior/posterior draws)
 
-We can compute \(x_{i,t,s}\) for every site–time–sample. Summaries:
-- Posterior mean: \(\bar x_{i,t} = \tfrac{1}{S}\sum_s x_{i,t,s}\)
-- Uncertainty via quantiles or variances across \(s\).
+We can compute $x_{i,t,s}$ for every site–time–sample. Summaries: -
+Posterior mean: $\bar x_{i,t} = \tfrac{1}{S}\sum_s x_{i,t,s}$ -
+Uncertainty via quantiles or variances across $s$.
 
 # Vectorisation Strategy
 
-- **Vectorise across sites.** Keep a **single loop over time**; compute all sites in parallel at each step using matrix/elementwise operations.
-- **Do not** loop over sites when not needed; instead, operate on columns (time slices) or rows (sites) as whole vectors/matrices.
+-   **Vectorise across sites.** Keep a **single loop over time**;
+    compute all sites in parallel at each step using matrix/elementwise
+    operations.
+-   **Do not** loop over sites when not needed; instead, operate on
+    columns (time slices) or rows (sites) as whole vectors/matrices.
 
 **Pattern (base R):**
-```r
+
+``` r
 # one loop over time; sites vectorised
 dx_dt <- m[, tt] * a * b * z[, tt] * (1 - x[, tt]) - r * x[, tt]
 dz_dt <- a * c * x[, tt] * (1 - z[, tt]) - g * z[, tt]
@@ -90,31 +118,44 @@ z[, tt+1] <- z[, tt] + dz_dt * dt
 
 # Practical Notes & Gotchas
 
-- **Shape discipline:** length of \(m_{t'}\) (or width of \(m\) matrix) must equal the number of integration steps.
-- Changing \(\Delta t\) changes both **step count** and the **lengths** of all time‑indexed inputs.
-- In **greta.dynamics**, time is carried by the `iter` index inside the transition function; pass **time‑varying inputs** as arrays and index them by `iter`.
-- Use **burn‑in** when forcing is seasonal, otherwise initial conditions can dominate early behaviour.
+-   **Shape discipline:** length of $m_{t'}$ (or width of $m$ matrix)
+    must equal the number of integration steps.
+-   Changing $\Delta t$ changes both **step count** and the **lengths**
+    of all time‑indexed inputs.
+-   In **greta.dynamics**, time is carried by the `iter` index inside
+    the transition function; pass **time‑varying inputs** as arrays and
+    index them by `iter`.
+-   Use **burn‑in** when forcing is seasonal, otherwise initial
+    conditions can dominate early behaviour.
 
 # Implementation Plan (Checklist)
 
-1. **Parity check:** implement a plain‑R integrator with static \(m\) and match it against a **greta.dynamics** version.
-2. **Seasonality:** replace \(m\) by \(m(t)\) in both implementations and verify trajectories are consistent.
-3. **Multi‑site:** extend to \(N\) sites by vectorising over rows (sites) with a **single time loop**.
-4. **External coupling:** plug in \(\hat m_{i,t}\) (Option 1), then enable the **calibrated link** (Option 2) with priors if estimating in greta.
-5. **Interpolation:** if \(\hat m\) is monthly, construct an interpolator and evaluate on the solver grid.
-6. **Diagnostics:** always plot \(m(t)\) alongside \(x(t)\) and \(z(t)\).
+1.  **Parity check:** implement a plain‑R integrator with static $m$ and
+    match it against a **greta.dynamics** version.
+2.  **Seasonality:** replace $m$ by $m(t)$ in both implementations and
+    verify trajectories are consistent.
+3.  **Multi‑site:** extend to $N$ sites by vectorising over rows (sites)
+    with a **single time loop**.
+4.  **External coupling:** plug in $\hat m_{i,t}$ (Option 1), then
+    enable the **calibrated link** (Option 2) with priors if estimating
+    in greta.
+5.  **Interpolation:** if $\hat m$ is monthly, construct an interpolator
+    and evaluate on the solver grid.
+6.  **Diagnostics:** always plot $m(t)$ alongside $x(t)$ and $z(t)$.
 
 # Minimal Reference Snippets
 
-## Seasonal \(m(t)\) on a grid
-```r
+## Seasonal $m(t)$ on a grid
+
+``` r
 t <- seq(0, 365, by = 0.1)
 m0 <- 100; amp <- 0.5; period <- 365; phase <- 0
 m_vec <- pmax(m0 * (1 + amp * sin(2 * pi * (t / period) + phase)), 0)
 ```
 
 ## Multi‑site skeleton (vectorised over sites)
-```r
+
+``` r
 n_loc <- 3
 x <- matrix(NA_real_, n_loc, length(t)); z <- x
 x[, 1] <- 0.02; z[, 1] <- 0.001
@@ -131,7 +172,8 @@ for (tt in 1:(length(t) - 1)) {
 ```
 
 ## greta.dynamics transition (time‑varying input via `iter`)
-```r
+
+``` r
 transition <- function(state, m_vec, a, b, c, r, g, dt, iter) {
   x <- state[1]; z <- state[2]
   m_now <- m_vec[iter]
@@ -143,7 +185,9 @@ transition <- function(state, m_vec, a, b, c, r, g, dt, iter) {
 
 # Notation
 
-- \(i\): site index; \(t\): time index; \(s\): sample index  
-- \(x(t)\): human infection proportion; \(z(t)\): infectious mosquito proportion  
-- \(m(t)\): mosquito abundance (forcing); \(a,b,c,r,g\): rates/parameters  
-- \(\hat m_{i,t}\): external mosquito model output (e.g., GLM); **calibration** via \(\log m = \alpha + \gamma \log \hat m\).
+-   $i$: site index; $t$: time index; $s$: sample index\
+-   $x(t)$: human infection proportion; $z(t)$: infectious mosquito
+    proportion\
+-   $m(t)$: mosquito abundance (forcing); $a,b,c,r,g$: rates/parameters\
+-   $\hat m_{i,t}$: external mosquito model output (e.g., GLM);
+    **calibration** via $\log m = \alpha + \gamma \log \hat m$.
