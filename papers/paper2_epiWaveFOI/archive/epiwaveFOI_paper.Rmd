@@ -1,0 +1,188 @@
+---
+title: "Supervisor Meeting Notes — EpiWave FOI Model"
+author: "Ernest Moyo"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+  word_document: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Executive Summary
+
+This meeting aligned the **EpiWave FOI** programme on three fronts: (1)
+make the **Ross–Macdonald (RM)** core fast and robust under **African
+seasonality**; (2) elevate **vector-informed parameterisation** for $M$
+(abundance), $A$ (biting rate), and $g$ (mosquito death rate); and (3)
+stage a **small spatial case study for Tanzania** that connects FOI to
+incidence, validating with entomological and surveillance data. We will
+**hold** $B, C, r$ fixed in v1 to keep scope tractable and focus the
+novelty on vector integration ($M, A, g$).
+
+# Decisions & Rationale
+
+## D1. Prioritise time-varying $M, A, g$; hold $B, C, r$ fixed in v1
+
+-   **Why:** Biggest epidemiological leverage and closest link to vector
+    data and interventions; $B, C$ are weakly varying, $r$ ties more to
+    case management than vector control.
+-   **Implication:** Novelty is concentrated where we have data and
+    mechanistic priors (Vector Atlas, MosquitoDB, ITN/IRS evidence).
+
+## D2. Stress-test ODE solvers against “hard” African seasonality
+
+-   **Why:** Numerical stability and speed are critical for
+    national-scale mapping. Hard cases = **bimodal peaks** (e.g.,
+    Uganda-like) and **long dry/short intense wet** spikes (southern
+    Africa-like).
+-   **Implication:** Choose solver & step-control that remain accurate
+    for sharp transitions while being GPU/auto-diff friendly for
+    inference.
+
+## D3. Intervention effects enter via multiplicative modifiers on $M, A, g$
+
+-   **Why:** Matches experimental hut trial (EHT) evidence that
+    **mortality, deterrence, and blood-feeding inhibition** change with
+    resistance and product class.
+-   **Implication:** Start simple (one or two parameters per pathway)
+    and expand complexity later as data allow.
+
+# Model Architecture (v1)
+
+## 1) Transmission core (Ross–Macdonald)
+
+$$
+\frac{dx}{dt} = m(t, s)\,a(t, s)\,b\,z\,(1-x) - r\,x, \qquad
+\frac{dz}{dt} = a(t, s)\,c\,x\,(1-z) - g(t, s)\,z,
+$$
+
+where $x$ = human infectious fraction, $z$ = infectious mosquito
+fraction, and $s$ indexes **site/pixel**. **FOI**: $$
+\xi(t,s) = m(t,s)\,a(t,s)\,b\,z(t,s).
+$$
+
+We treat $b, c, r$ as constants in v1.
+
+## 2) Supports (parameter domains)
+
+-   $m>0$; unbounded above.\
+-   $a \in (0,1]$\*\* (first-bite convention for v1; can relax later).\
+-   $g>0$ (instantaneous death rate).
+
+## 3) Data-informed priors & covariate links
+
+### 3.1 Mosquito abundance $m(t,s)$
+
+Baseline **vector-model** surface $m^\*_{t,s}$ (e.g., Vector Atlas/Jerry
+model/HLC-derived) with intervention & climate covariates
+$X^{(m)}_{t,s}$: $$
+m_{t,s} = m^\*_{t,s} \; \exp\!\big(X^{(m)}_{t,s}\,\beta_m\big)\; f_{\text{net}}^{(m)}(\text{ITN}_{t,s}, \rho_{\text{res}}, \text{use}_{t,s})\; f_{\text{IRS}}^{(m)}(\cdot).
+$$
+
+> **Minimal v1**: one **net-use** term and one **resistance modifier**
+> suffices; add IRS later if in scope.
+
+### 3.2 Biting rate $a(t,s)$
+
+Start with constant baseline $a_0$, reduced by nets
+(contact/repellency/feeding inhibition): $$
+a_{t,s} = a_0\; f_{\text{net}}^{(a)}(\text{ITN}_{t,s}, \rho_{\text{res}}, \text{use}_{t,s}).
+$$
+
+### 3.3 Death rate $g(t,s)$
+
+From survival probability $S_{\Delta t}(t,s)$ over $\Delta t$ (e.g.,
+daily): $$
+g_{t,s} = -\frac{1}{\Delta t}\ln S_{\Delta t}(t,s) = g^\*_{t,s} \; f_{\text{net}}^{(g)}(\text{ITN}_{t,s}, \rho_{\text{res}}, \text{use}_{t,s})\; f_{\text{IRS}}^{(g)}(\cdot).
+$$
+
+> **Note:** $g^\*_{t,s}$ from **microclimate survival** (temperature,
+> humidity); then modify with interventions.
+
+## 4) Linking to EHT evidence (for $f_{\text{net}}$)
+
+Let **bioassay survival** $\theta_B$ be the resistance index and **EHT
+survival** $\theta_H$ the net-induced survival in huts. Empirical
+relationships show: - As **resistance rises**, net-induced **mortality
+declines**, **deterrence falls**, and **successful blood-feeding
+increases**. - Differences by **hut design** (East vs West) suggest
+caution when translating to community settings.
+
+We use a **monotone mapping** (logistic or log-logistic)
+$\theta_H = f(\theta_B; \alpha, \beta)$ and then allocate effects to the
+three pathways: - **Mortality uplift** → $f_{\text{net}}^{(g)}$\
+- **Biting/contact reduction** → $f_{\text{net}}^{(a)}$\
+- **Abundance/entry deterrence** → $f_{\text{net}}^{(m)}$
+
+> Evidence base: experimental hut trials meta-analysis (Nash et al.,
+> 2021).
+
+# Numerical Strategy
+
+1.  **Stress-set**: synthetic seasonality forcing with (i) **bimodal**
+    peaks and (ii) **long dry + sharp wet** spike.\
+2.  **Benchmark**: fixed tolerances; compare explicit vs. adaptive
+    solvers (auto-diff friendly).\
+3.  **Accept** solver if (i) preserves positivity/units, (ii) stable for
+    sharp transitions, (iii) meets wall-time budget for pixel-level
+    runs.
+
+# Validation Plan
+
+-   **Internal**: state trajectory checks; FOI–incidence consistency
+    under known special cases.\
+-   **External**: site-level comparison of predicted **mortality**,
+    **blood-feeding inhibition**, and **deterrence** against EHT-derived
+    summaries where available; compare incidence fits vs. routine data.
+
+# Tanzania v1 Case Study (scaffold)
+
+1.  **Sites**: select 2–3 contrasting districts (bimodal vs unimodal
+    seasonality).\
+2.  **Inputs**: vector abundance/survival surfaces, ITN coverage & type,
+    bioassay resistance, rainfall/temperature.\
+3.  **Outputs**: maps of $m, a, g$, seasonal **FOI**, predicted
+    incidence.\
+4.  **Checks**: sensitivity to resistance; counterfactual without nets.
+
+# Action Items
+
+| ID | Task | Owner | Notes | Due |
+|---:|----|----|----|----|
+| A1 | Compile baseline $m^\*_{t,s}$ (current Vector Atlas run or proxy) | Ernest + Collaborator | Include HLC-derived layer if available | *TBD* |
+| A2 | Microclimate → $g^\*_{t,s}$ survival-to-rate transform | Ernest | Use daily $\Delta t$; verify units | *TBD* |
+| A3 | Specify net-effect functions $f_{\text{net}}^{(m)}, f_{\text{net}}^{(a)}, f_{\text{net}}^{(g)}$ | Ernest | Start with 1–2 params each; resistance as modifier | *TBD* |
+| A4 | Build seasonality stress-set and run solver benchmarks | Ernest | Bimodal + spike scenarios | *TBD* |
+| A5 | Prepare Tanzania mini-case inputs and validation targets | Ernest | Pick 2–3 districts | *TBD* |
+
+# Open Questions / Risks
+
+-   Partitioning **net effects** across $m, a, g$ is **non-unique**;
+    identify minimal set that reproduces EHT patterns.\
+-   **Hut-design bias** in EHTs may inflate/deflate pathways;
+    triangulate with additional field data where possible.\
+-   Balance between **model richness** and **identifiability** in a
+    spatial Bayesian setting.
+
+# Appendix A — Ross–Macdonald & FOI (for reference)
+
+$$
+\frac{dx}{dt} = m a b z (1-x) - r x, \qquad
+\frac{dz}{dt} = a c x (1-z) - g z, \qquad
+\xi = m a b z.
+$$
+
+# References
+
+-   Meeting discussion with supervisors (Sept 2025).\
+-   EpiWave FOI Model documentation (Sept 2025).\
+-   Nash, R.K. et al. (2021). *Systematic review of the entomological
+    impact of ITNs evaluated using experimental hut trials in Africa*.
+    **Current Research in Parasitology & Vector-Borne Diseases**,
+    1:100047. <https://doi.org/10.1016/j.crpvbd.2021.100047>
