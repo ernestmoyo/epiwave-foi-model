@@ -68,46 +68,46 @@ library(deSolve)
 # unrealistically hard):
 
 # make a curve with bimodal intra-annual seasonality, one peak higher than other
-intra_annual_seasonality <- function(month) {
-  year <- month / 12
+intra_annual_seasonality <- function(day) {
+  year <- day / 365
   cycle <- 2 * pi
   sin(2 * cycle * year) - 0.5 * cos(cycle * year)
 }
 
 # and another with inter-annual seasonality, going up for 5 years then down for
 # 5, with half as much influence as the annual variation
-inter_annual_seasonality <- function(month) {
-  year <- month / 12
+inter_annual_seasonality <- function(day) {
+  year <- day / 365
   decade <- year / 10
   cycle <- 2 * pi
-  -0.5 * cos(cycle * decade)
+  -0.1 * cos(cycle * decade)
 }
 
 # combine these two
-seasonality <- function(month) {
-  intra_annual_seasonality(month) +
-    inter_annual_seasonality(month)
+seasonality <- function(day) {
+  intra_annual_seasonality(day) +
+    inter_annual_seasonality(day)
 }
 
 # define m a and g functions
 
 # m must be positive, with large integers
-m <- function(month) {
-  s <- seasonality(month)
-  exp(1 + 1.5 * s)
+m <- function(day) {
+  s <- seasonality(day)
+  exp(1 + 0.5 * s)
 }
 
 # we are assuming biting rate is between 0 and 1, make biting activity slightly
 # higher in the peak season (higher temperature and humidity)
-a <- function(month) {
-  s <- seasonality(month)
-  plogis(-2.5 + 0.5 * s)
+a <- function(day) {
+  s <- seasonality(day)
+  plogis(-2 + 0.5 * s)
 }
 
-g <- function(month) {
+g <- function(day) {
   # model average mosquito lifespan based on seasonality
-  s <- seasonality(month)
-  lifespan <- exp(1 + 1 * s)
+  s <- seasonality(day)
+  lifespan <- exp(2 + 0.5 * s)
   # instantaeous death rate is 1 divided by lifespan
   1 / lifespan
 }
@@ -115,26 +115,24 @@ g <- function(month) {
 # plot these to check
 
 n_years <- 3
-months <- seq(0, n_years * 12, length.out = 1e3)
+day <- seq(0, n_years * 365, length.out = 1e3)
 
 par(mfrow = c(2, 2))
-plot(seasonality(months) ~ months,
+plot(seasonality(day) ~ day,
      type = "l",
      main = "seasonality")
-plot(m(months) ~ months,
+plot(m(day) ~ day,
      type = "l",
      main = "abundance")
-plot(a(months) ~ months,
+plot(a(day) ~ day,
      type = "l",
      main = "biting rate",
      ylim = c(0, 1))
-plot(g(months) ~ months,
+plot(g(day) ~ day,
      type = "l",
      main = "mortality")
 
 # solve these ODEs in deSolve to check we can do this correctly
-
-
 deriv <- function(t, state, params) {
   with(as.list(c(state, params)), {
     m_t <- m(t)
@@ -150,33 +148,33 @@ deriv <- function(t, state, params) {
 
 # fix the other parameters, for our ODE solving experiments
 params <- list(
-  b = 0.9,
-  c = 0.9,
+  b = 0.8,
+  c = 0.8,
   r = 1 / 7
 )
 
 # burn in for 1 year prior to simulations (start at 0 months, evaluate from 12
 # months onwards)
-months_burnin <- 12 * 5
-months_sim <- 12 * 3
-months_total <- months_burnin + months_sim
-months <- seq(0, months_total, by = 0.1)
+days_burnin <- 365 * 5
+days_sim <- 365 * 4
+days_total <- days_burnin + days_sim
+days <- seq(0, days_total, by = 1)
 init <- c(x = 0.1, z = 0.01)
-out <- ode(init, months, deriv, params)
+out <- ode(init, days, deriv, params)
 
 # crop out the burnin, and relabel the months
-keep <- months > months_burnin
+keep <- days > days_burnin
 out_sim <- out[keep, ]
-out_sim[, "time"] <- out_sim[, "time"] - months_burnin
+out_sim[, "time"] <- out_sim[, "time"] - days_burnin
 
 # compute the force of infection
 foi <- m(out_sim[, "time"]) *
   a(out_sim[, "time"]) *
-  b *
+  params$b *
   out_sim[, "z"]
 
 # and the infection incidence (per month, as a fraction of the population)
-inf_inc <- foi * (1 -   out_sim[, "x"])
+inf_inc <- foi * (1 - out_sim[, "x"])
 
 par(mfrow = c(2, 2))
 plot(x ~ time,
@@ -190,8 +188,9 @@ plot(z ~ time,
 plot(foi ~ time,
      data = out_sim,
      type = "l",
-     main = "Force of infection")
+     main = "Human force of infection")
 plot(inf_inc ~ time,
      data = out_sim,
      type = "l",
      main = "Infection incidence")
+
