@@ -185,9 +185,9 @@ transition <- function(state, m_vec, a, b, c, r, g, dt, iter) {
 
 # Notation
 
--   $i$: site index; $t$: time index; $s$: sample index\
+-   $i$: site index; $t$: time index; $s$: sample index
 -   $x(t)$: human infection proportion; $z(t)$: infectious mosquito
-    proportion\
--   $m(t)$: mosquito abundance (forcing); $a,b,c,r,g$: rates/parameters\
+    proportion
+-   $m(t)$: mosquito abundance (forcing); $a,b,c,r,g$: rates/parameters
 -   $\hat m_{i,t}$: external mosquito model output (e.g., GLM);
     **calibration** via $\log m = \alpha + \gamma \log \hat m$.

@@ -46,14 +46,14 @@ Concise notes from the follow‑up discussion on the **EpiWave FOI Model**. Focu
 
 # Action Items
 
-| Item | Owner | Due | Notes |
-|------------------|------------------|------------------|------------------|
-| Lock Δt strategy (fixed vs adaptive) and seasonal regimes | Ernest + Supervisors | Next sync | Start with fixed Δt; pilot adaptive in high‑variance zones |
-| Finalize `iterate_state` signature + unit tests | Ernest | Next sprint | Ensure bounds checks keep states ∈ [0,1] |
-| Prior calibration for `log(m)` model | Ernest | Next sprint | β truncated ≥0; α centered at 0; sensitivity to σ |
-| Define covariates `X` and data joins (Vector Atlas, MosquitoDB, NMCP) | Ernest | Ongoing | Track provenance and temporal alignment |
-| Uncertainty products (ensembles → FOI maps) | Ernest | Next sprint | Summaries: mean, median, 50/90% CrI |
-| Policy dashboard spec | Ernest + Stakeholders | Next review | Include before/after intervention deltas |
+| Item |   |   | Notes |
+|----|----|----|----|
+| Lock Δt strategy (fixed vs adaptive) and seasonal regimes |  |  | Start with fixed Δt; pilot adaptive in high‑variance zones |
+| Finalize `iterate_state` signature + unit tests |  |  | Ensure bounds checks keep states ∈ [0,1] |
+| Prior calibration for `log(m)` model |  |  | β truncated ≥0; α centered at 0; sensitivity to σ |
+| Define covariates `X` and data joins (Vector Atlas, MosquitoDB, NMCP) |  |  | Track provenance and temporal alignment |
+| Uncertainty products (ensembles → FOI maps) |  |  | Summaries: mean, median, 50/90% CrI |
+| Policy dashboard spec |  |  | Include before/after intervention deltas |
 
 # Appendix – Technical Notes (New)
 
@@ -68,6 +68,6 @@ Concise notes from the follow‑up discussion on the **EpiWave FOI Model**. Focu
 
 # References to Discussion (internal)
 
--   Iterative stepping and Δt choice; using latest states for updates.\
--   Interface to `iterate_dynamic()`; returning a combined next‑state vector.\
+-   Iterative stepping and Δt choice; using latest states for updates.
+-   Interface to `iterate_dynamic()`; returning a combined next‑state vector.
 -   Feedback vs GP clarification and computational trade‑offs.

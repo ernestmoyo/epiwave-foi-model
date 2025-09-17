@@ -240,3 +240,231 @@ draws <- mcmc(m, n_samples = 2000, warmup = 1000, chains = 4)
 -   [ ] Run Plain R simulation and plots
 -   [ ] Run greta simulation and plots
 -   [ ] (Optional) Add priors + likelihood and run mcmc()
+
+# Shifting to Multi-Site
+
+This note explains, step by step, how the **multi-site** Ross–Macdonald
+simulation works and *why* each part exists. Code chunks are
+**runnable**. The multi-site design treats each location (“site”) as an
+independent copy of the model, updated **in parallel** within a single
+time loop.
+
+## State Definitions
+
+-   `x` — fraction of **humans infected** at a site (prevalence, 0–1).\
+-   `z` — fraction of **mosquitoes infected** at a site (0–1).
+
+## ODEs (Ross–Macdonald core)
+
+$$
+\begin{aligned}
+\frac{dx}{dt} &= m\,a\,b\,z\,(1 - x) - r\,x, \\\\
+\frac{dz}{dt} &= a\,c\,x\,(1 - z) - g\,z.
+\end{aligned}
+$$
+
+-   $m$: mosquitoes per person (can vary by site/time).\
+-   $a$: bites per mosquito per day.\
+-   $b$: transmission mosquito → human.\
+-   $c$: transmission human → mosquito.\
+-   $r$: human recovery rate (≈ 1 / infectious period).\
+-   $g$: mosquito mortality rate (≈ 1 / lifespan).
+
+## Discretization (Euler step)
+
+For time step $\Delta t$: $$
+\text{state}_{t+\Delta t} = \text{state}_t + \frac{d(\text{state})}{dt}\,\Delta t.
+$$
+
+This is applied **element-wise** to each site.
+
+------------------------------------------------------------------------
+
+# Single-site functions
+
+```{r}
+dx_dt <- function(x, z, m, a, b, r) {
+  m * a * b * z * (1 - x) - r * x
+}
+
+dz_dt <- function(x, z, a, c, g) {
+  a * c * x * (1 - z) - g * z
+}
+```
+
+# Parameters & initials (shared defaults)
+
+```{r}
+m <- 100
+a <- 0.1
+b <- 0.9
+infection_duration <- 21
+r <- 1 / infection_duration
+c <- 0.9
+mosquito_lifespan <- 21
+g <- 1 / mosquito_lifespan
+
+x_init <- 0.02
+z_init <- 0.001
+```
+
+# Single-step sanity checks (optional)
+
+```{r}
+dx_dt(x = x_init, z = z_init, m = m, a = a, b = b, r = r)
+dz_dt(x = x_init, z = z_init, a = a, c = c, g = g)
+
+x_next_day <- x_init + dx_dt(x_init, z_init, m, a, b, r)
+z_next_day <- z_init + dz_dt(x_init, z_init, a, c, g)
+
+x_in_two_days  <- x_init + 2   * dx_dt(x_init, z_init, m, a, b, r)
+x_in_0.1_days  <- x_init + 0.1 * dx_dt(x_init, z_init, m, a, b, r)
+
+list(x_next_day = x_next_day,
+     z_next_day = z_next_day,
+     x_in_two_days = x_in_two_days,
+     x_in_0.1_days = x_in_0.1_days)
+```
+
+------------------------------------------------------------------------
+
+# Multi-site simulation (vectorised by site)
+
+The multi-site block stacks sites by **rows** and time by **columns**.
+We keep **one time loop** and do **vector arithmetic** across sites each
+step.
+
+## Why multiple sites?
+
+-   Compare locations on the same time axis.
+-   Share a clean implementation that is faster than looping over sites
+    inside the time loop.
+-   Allow site-varying drivers like $m(t)$ or site-specific parameters
+    later.
+
+## Time grid (shared by all sites)
+
+```{r}
+S <- 3            # number of sites (edit as needed)
+t_max <- 10
+dt <- 0.1
+t <- seq(0, t_max, by = dt)
+n_t <- length(t)
+```
+
+**Why:** one global clock makes sites comparable day-by-day.
+
+## Initial conditions by site
+
+```{r}
+x0 <- rep(x_init, S)   # e.g., c(0.02, 0.015, 0.03)
+z0 <- rep(z_init, S)
+```
+
+**Why:** each site needs its own starting values.
+
+## Time-varying mosquito density per site: $m(t)$
+
+```{r}
+m0 <- c(8, 20, 50)     # start per site
+mT <- c(100, 60, 80)   # end per site
+
+# m_mat: S x n_t (rows = sites, cols = time)
+m_mat <- sapply(t, function(tt) m0 + (mT - m0) * (tt / t_max))
+dim(m_mat)  # sanity check
+```
+
+**Why:** capture seasonal or ecological changes differing by site.
+Precomputing lets each step read $m$ instantly.
+
+## State matrices
+
+```{r}
+x_mat <- matrix(NA_real_, nrow = S, ncol = n_t)
+z_mat <- matrix(NA_real_, nrow = S, ncol = n_t)
+x_mat[, 1] <- x0
+z_mat[, 1] <- z0
+```
+
+**Why:** store the **entire** trajectory (rows = sites, cols = time).
+
+## Single time loop; vector ops across sites
+
+```{r}
+for (j in 2:n_t) {
+  x_prev <- x_mat[, j - 1]
+  z_prev <- z_mat[, j - 1]
+  m_now  <- m_mat[, j - 1]
+
+  dx <- dx_dt(x = x_prev, z = z_prev, m = m_now, a = a, b = b, r = r)
+  dz <- dz_dt(x = x_prev, z = z_prev,             a = a, c = c, g = g)
+
+  # Optional: keep states in [0,1]
+  x_mat[, j] <- pmin(pmax(x_prev + dx * dt, 0), 1)
+  z_mat[, j] <- pmin(pmax(z_prev + dz * dt, 0), 1)
+}
+```
+
+**Why each step:** 1. Grab previous states for all sites.\
+2. Grab current $m$ for all sites.\
+3. Compute derivatives with **vector inputs** (length `S`) →
+element-wise arithmetic.\
+4. Euler update for all sites simultaneously.
+
+## Plots (one line per site)
+
+```{r}
+par(mfrow = c(1, 2))
+matplot(t, t(x_mat), type = "l", lty = 1, xlab = "time", ylab = "x (humans infected)")
+matplot(t, t(z_mat), type = "l", lty = 1, xlab = "time", ylab = "z (mosquitoes infected)")
+```
+
+------------------------------------------------------------------------
+
+# Shared vs site-specific parameters (optional)
+
+Right now `a, b, r, c, g` are **shared** across sites. Make them
+**length-`S` vectors** to vary by site:
+
+```{r}
+# Example (commented by default)
+# a_vec <- c(0.10, 0.08, 0.12)
+# b_vec <- c(0.90, 0.85, 0.95)
+# r_vec <- 1 / c(21, 18, 25)
+# c_vec <- c(0.90, 0.88, 0.92)
+# g_vec <- 1 / c(21, 25, 19)
+
+# for (j in 2:n_t) {
+#   x_prev <- x_mat[, j - 1]
+#   z_prev <- z_mat[, j - 1]
+#   m_now  <- m_mat[, j - 1]
+#   dx <- m_now * a_vec * b_vec * z_prev * (1 - x_prev) - r_vec * x_prev
+#   dz <- a_vec * c_vec * x_prev * (1 - z_prev) - g_vec * z_prev
+#   x_mat[, j] <- pmin(pmax(x_prev + dx * dt, 0), 1)
+#   z_mat[, j] <- pmin(pmax(z_prev + dz * dt, 0), 1)
+# }
+```
+
+------------------------------------------------------------------------
+
+# Guardrails & Tips
+
+-   Keep `dt` small enough (e.g., 0.1 day) for stability with Euler.\
+-   Clamp states to [0,1] (shown above).\
+-   Validate dimensions early:
+
+```{r}
+stopifnot(identical(dim(m_mat), c(S, n_t)))
+stopifnot(identical(dim(x_mat), c(S, n_t)))
+stopifnot(identical(dim(z_mat), c(S, n_t)))
+```
+
+------------------------------------------------------------------------
+
+# Next steps
+
+-   Introduce **coupling** between sites with a movement/mixing matrix
+    $W$.\
+-   Swap Euler for a higher-order ODE solver (e.g., `deSolve::ode`).\
+-   Fit parameters to data via Bayesian methods (e.g., `greta`) or
+    likelihood-based approaches.
