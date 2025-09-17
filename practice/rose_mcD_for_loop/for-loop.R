@@ -22,6 +22,7 @@ g <- 1 / mosquito_lifespan
 x_init <- 0.02
 z_init <- 0.001
 
+
 # change in fraction of people infected per unit time (one day) from initial
 # conditions
 dx_dt(x = x_init, z = z_init, m = m, a = a, b = b, r = r)
@@ -44,29 +45,48 @@ x_in_two_days <- x_init + 2 * dx_dt(x = x_init, z = z_init, m = m, a = a, b = b,
 x_in_0.1_days <- x_init + 0.1 * dx_dt(x = x_init, z = z_init, m = m, a = a, b = b, r = r)
 
 
+# Multisite extension
+s <- 10000 # number of sites - which can be changed as needed
+
+
 t_max <- 10
 dt <- 0.1
 t <- seq(0, t_max, by = dt)
 n_t <- length(t)
-m <- 8 + (100 - 8)*(t/t_max) # in general this has to be close to a sine graph (this illustrative ie a linear ramp)
+# m <- 8 + (100 - 8)*(t/t_max) # in general this has to be close to a sine graph (this illustrative ie a linear ramp)
 
-x <- rep(NA, n_t)
-z <- rep(NA, n_t)
-x[1] <- x_init
-z[1] <- z_init
-for(i in 2:n_t) {
-  x[i] <- x[i - 1] + dx_dt(x = x[i - 1],
-                           z = z[i - 1],
-                           m = m[i - 1],
-                           a = a,
-                           b = b,
-                           r = r) * dt
-  z[i] <- z[i - 1] + dz_dt(x = x[i - 1],
-                           z = z[i - 1],
-                           a = a,
-                           c = c,
-                           g = g) * dt
+# Initial conditions per site
+x0 <- rep(x_init, s) # E.G. , c(0.02, 0.015, 0.03)
+z0 <- rep(z_init, s)
+
+# Site specific, time varying m(t) ILLUSTRATIVE LINEAR RAMP
+set.seed(20250916)
+m0 <- runif(s, 0, 50) # start value per site
+mT <- runif(s, 50, 100) # end value per site
+# m_mat: S x n_t (ROWS = SITES, COL = TIME)
+m_mat <- sapply(t, function(tt) m0 + (mT - m0)*(tt/t_max))
+
+# state matrices (rows = sites, cols = time)
+x_mat <- matrix(NA_real_, nrow = s, ncol = n_t)
+z_mat <- matrix(NA_real_, nrow = s, ncol = n_t)
+x_mat[, 1] <- x0
+z_mat[, 1] <- z0
+
+# Single time loop, vector operations accross sites
+for (j in 2:n_t) {
+  x_prev <- x_mat[, j-1]
+  z_prev <- z_mat[, j-1]
+  m_now <- m_mat[, j-1]
+
+  # a, b, r, c, g are shared across sites - making them length s vectors if needed
+  dx <- dx_dt(x = x_prev, z = z_prev, m = m_now, a = a, b = b, r = r)
+  dz <- dz_dt(x = x_prev, z = z_prev,            a = a, c = c, g = g)
+
+  x_mat[, j] <- x_prev + dx * dt
+  z_mat[ ,j] <- z_prev + dz * dt
 }
+
+# plotting one line per sire
 par(mfrow = c(1, 2))
-plot(x ~ t, type = "l")
-plot(z ~ t, type = "l")
+matplot(t, t(x_mat), type = "l")
+matplot(t, t(z_mat), type = "l")
