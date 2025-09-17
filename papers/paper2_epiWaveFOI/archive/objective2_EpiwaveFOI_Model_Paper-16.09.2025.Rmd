@@ -1,0 +1,213 @@
+---
+title: "Objective Two — Vector-Informed Epiwave FOI Model (Methods & Framing)"
+author: "Ernest Moyo"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: paged
+  word_document: default
+  pdf_document: default
+fontsize: 11pt
+geometry: margin=1in
+---
+
+# Introduction
+
+-   **Problem & burden — why vectors/resistance matter now.**\
+    Malaria risk is heterogeneous in space and time. Intervention impact is increasingly modulated by vector ecology and insecticide resistance. Maps driven only by cases and coarse environmental covariates underperform when vector dynamics shift quickly, undermining timely and efficient targeting..........heterogeniety is driven by VD
+
+-   Integrating ento data into malaria epi mapping (map based on epi data,
+
+-   **What’s been tried (SDMs → mechanistic → hybrids) & limits here.**\
+    Species-distribution models capture niches but not transmission mechanics; fully mechanistic models often ignore spatial covariates or are too slow for mapping; hybrids seldom give vectors first-class status and rarely propagate uncertainty into FOI surfaces at ward/pixel scale.
+
+-   **Gap.**\
+    No operational, -specific framework that (i) models $m,a,g$ as covariate-linked, intervention- and resistance-modified processes, (ii) stress-tests seasonal extremes for numerical robustness, and (iii) outputs FOI surfaces with quantified uncertainty usable for programme timing/targeting. **Objective:** develop and validate a vector-informed FOI mapping module that elevates $m(t,s), a(t,s), g(t,s)$ as data-linked, time-varying processes and plugs them into a national mapping workflow.
+
+-   **Contribution (one crisp sentence).**
+
+    -   Model
+
+    -   Simulation
+
+    -   Case study \
+        Developed the model - introducing VD - Dememstrated it can with a case Study in Tz = *We introduce a fast, vector-informed FOI mapping module that treats mosquito abundance, biting rate, and death rate as covariate-linked, intervention- and resistance-modified processes, producing policy-ready FOI maps with uncertainty for Tanzania.*
+
+# Methods
+
+-   Model
+
+    -   Maths (whats there already)
+
+-   Simulation estimation study
+
+    -   [We are already doing this in an adhoc)
+
+    -   How well can you recover ... the parameters
+
+    -   
+
+-   Case study
+
+    -   Tz, law response - Intervention, MAP [ITNs etc]
+
+    -   Simple as possible, as compecated as possible
+
+## Model Description
+
+-   DATA Types
+
+    -   
+
+-    \| MODELS
+
+    -   
+
+## Data (inclusion/exclusion)
+
+-   **Entomology/vector:** curated abundance/proxy layers (Vector-Atlas-style outputs), micro-climate–derived mosquito survival probabilities, bioassay resistance indices, ITN/IRS coverage and use.
+-   **Epidemiology:** routine case time series (e.g., DHIS2), optional prevalence clusters for calibration.
+-   **Environment:** rainfall, temperature, humidity, NDVI, elevation; all harmonised to a common grid/time base.
+-   **Exclusions:** locations with poor geolocation fidelity; months with known reporting outages.
+
+## Pre-processing
+
+Spatial harmonisation (project/aggregate to grid), temporal alignment (monthly), QA/QC (range checks, duplicates, plausible bounds), and bias correction where sampling is spatially clustered.
+
+## Observation models
+
+-   **Cases:** $C_{l,t}\sim \text{Poisson}(\gamma_l\,I_{l,t})$ with $\gamma_l$ (symptomatic/reporting rate) optionally hierarchical; pixel-to-admin mapping via population weights.
+-   **Prevalence:** $Y_{l,t}\sim \text{Binomial}(N_{l,t}, p_{l,t})$, with $p$ linked to latent incidence via standard conversion or auxiliary state.
+
+# Add the connector here: F mindful of the notation!!!!!
+
+## Transmission block (Ross–Macdonald + FOI)
+
+We use a two-compartment vector–host kernel with **time- and space-varying** vector processes: $$
+\frac{dx_{t,s}}{dt}= m_{t,s}\,a_{t,s}\,b\,z_{t,s}\,(1-x_{t,s})- r\,x_{t,s},\qquad
+\frac{dz_{t,s}}{dt}= a_{t,s}\,c\,x_{t,s}\,(1-z_{t,s})- g_{t,s}\,z_{t,s},
+$$ with FOI $$
+\xi_{t,s} = m_{t,s}\,a_{t,s}\,b\,z_{t,s}.
+$$ We hold $b,c,r$ constant in v1; model development concentrates novelty on $m_{t,s}, a_{t,s}, g_{t,s}$.
+
+### Supports (parameter domains)
+
+$$
+m_{t,s}>0,\qquad a_{t,s}\in(0,1]\ \text{(first-bite convention)},\qquad g_{t,s}>0.
+$$
+
+## Covariate-linked vector processes
+
+### Mosquito abundance $m_{t,s}$
+
+Baseline surface $m^{\ast}_{t,s}$ (from vector models/HLC-proportional outputs) scaled by covariates and interventions: $$
+m_{t,s}
+= m^{\ast}_{t,s}\,\exp\!\big(X^{(m)}_{t,s}\,\beta_m\big)\,\underbrace{\Big[(1-n_{t,s}) + n_{t,s}\,(1-\pi^{(m)}_{t,s})\Big]}_{\text{ITN population-reduction factor}},
+$$ where $n_{t,s}\in[0,1]$ is net use/coverage and $\pi^{(m)}_{t,s}\in[0,1]$ is the **fractional reduction among net-encountering mosquitoes**; $\pi^{(m)}_{t,s}$ is down-weighted by resistance susceptibility $u_{t,s}$ (e.g., bioassay susceptibility): $$
+\pi^{(m)}_{t,s} = u_{t,s}\,\pi^{(m)}_{0},\qquad u_{t,s}\in[0,1].
+$$ This “population-split” form preserves non-negativity under all $n,u,\pi_0$.
+
+### Biting rate $a_{t,s}$
+
+Start with constant baseline $a_0$ (no interventions), then apply ITN-mediated contact/feeding inhibition with resistance modification: $$
+a_{t,s} = a_0\,\Big(1 - n_{t,s}\,u_{t,s}\,\rho^{(a)}\Big),
+$$ where $\rho^{(a)}\in(0,1)$ is the **maximal** fractional reduction in biting rate among net users under full susceptibility.
+
+### Mosquito death rate $g_{t,s}$
+
+From survival probability over $\Delta t$ (daily/monthly) with micro-climate drivers: $$
+g^{\ast}_{t,s} = -\frac{1}{\Delta t}\ln S_{\Delta t}(T_{t,s}, H_{t,s},\ldots),
+\qquad
+g_{t,s} = g^{\ast}_{t,s}\,\Big(1 + n_{t,s}\,u_{t,s}\,\rho^{(g)}\Big),
+$$ where $\rho^{(g)}>0$ gives the **additive** uplift in instantaneous death rate due to ITNs under full susceptibility. IRS terms can be added analogously if in scope.
+
+> **Design notes:** keep v1 **minimal** (few parameters per pathway); encode intervention effects as monotone in resistance; preserve interpretability and positivity.
+
+## Spatial FOI layer with residual GP
+
+To capture residual spatial–temporal structure beyond covariates: $$
+\log \xi_{t,s}
+= \log\!\big(m_{t,s}a_{t,s}b z_{t,s}\big) + \varepsilon_{t,s},\qquad
+\varepsilon_{\cdot,\cdot}\sim \mathcal{GP}\big(0, K_\theta((t,s),(t',s'))\big),
+$$ with an RBF or Matérn kernel in space and a smooth temporal kernel; hyperparameters $\theta$ receive weakly-informative priors.
+
+## Hierarchical structure, priors & constraints
+
+-   **Coefficients:** $\beta_m\sim \mathcal N(0,\sigma^2)$; $\rho^{(a)},\rho^{(g)}\sim \text{Beta}(a,b)$ (or transformed if \>1); $a_0\in(0,1]$.
+-   **Kernels:** hyperparameters with half-normal priors; positivity constraints via log/softplus links.
+-   **Constants:** $b,c,r$ fixed in v1 (later sensitivity).
+
+## Computation
+
+-   **Numerics:** We use xxx ODE solver which we found to be computational efficient.
+-   **Inference:** Propose to do HMC
+-    Convergence via $\widehat R$, ESS, and posterior predictive checks. Sparse GP approximations if needed.
+
+## Validation & performance
+
+-   **Simulation estimation study (we can come back ti this): sim according to our study at xxxx location ..... there are the true m, g, a that we used ......**
+-   Pretend that real data and fit the model
+-   COmpare fitting Poiss against case data etc
+
+## Case study
+
+-   Source of data
+
+-   Covariates - context, country, years - map of case counts emberding VC, Prev surveys from MAP information (even old data)
+
+-   Source of case data or some version case data (might need some approval with the NMCP)
+
+-   Modification to align with Tz (eg catchment in epiwave)
+
+-   Assumptions / on Prev-Inc relationship ...... that we can use
+
+-   How do we fit it (we runn xxx sims, and stop at)
+
+-   Calc the posterier mean etc and produce maps
+
+-   Creating teh counterfactual versions (when using calculate can pass in thexxxx eg what if we cange the ITN nmbers - not all but we are just showing how useful this is to teh prog)
+
+-   
+
+# Results (skeleton)
+
+-   Model (done already above)
+-   Simulation estimation study
+    -   Say sim for 10 diff sights (bar chats) - actual vs
+
+    -   Tailor makes to show why my methods work against ... others
+
+    -   Unpack further
+-   Case study
+    -   Cases, Cases with no interventios, Cases w full interventions
+
+    -   Time series
+
+    -   Picking a site - considers space and time
+
+# Discussion (skeleton)
+
+-   **What’s new:**
+    -   vector-first FOI mapping with interpretable links from interventions & resistance to $m,a,g$.
+    -   more infor + does not do all (
+-   **How it compares/extends:** hybridises mechanistic kernel + spatial GP with programmatic covariates.
+-   **Policy:**
+    -   data needs - good data, ento maps etc
+    -   timing/targeting guidance, uncertainty-aware.
+    -   Subnational railoring
+    -   Maybe: Practical next steps are a Tanzania mini-case at ward scale and operational hand-off (e.g., dashboard).
+    -   can males map of everything a, b, etc
+-   **Limits:**
+    -   data gaps, identifiability trade-offs, hut-design/resistance proxies.
+    -   Level of tech ability of the user
+    -   Relatively more interpretable -
+-   **Future:** richer temporal dynamics, multiple vectors, pan-African scaling.
+-   Review of infereral methods, how things could be extended etc just as an option
+-   
+
+# Conclusion
+
+We present a fast, vector-informed FOI module that elevates $m,a,g$ as covariate-linked, intervention- and resistance-modified processes and yields policy-ready FOI maps with uncertainty for Tanzania.
