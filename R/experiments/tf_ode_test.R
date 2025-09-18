@@ -303,6 +303,61 @@ lines(pred ~ days_pred,
 # fit the spline with additional values on either side (repeating data values if
 # needed) to minimise the bias.
 
+# We can simultaneously estimate the coefficients for multiple sites in a
+# vectorised manner, and apply them to compute m, by using the linear algebra
+# expression for the maximum likelihood solution and the expectation fo the
+# linear regression model
+
+# pretend these are the data for N different sites, and that they are different
+mt_obs_mat <- cbind(mt_obs, mt_obs, mt_obs)
+n_sites <- ncol(mt_obs_mat)
+
+coefs_mat <- solve(t(bases_train) %*% bases_train) %*% t(bases_train) %*% log(mt_obs_mat)
+
+# check the results are very similar
+max(abs(coefs_mat[, 1] - coefs))
+
+# predict to values of m for all sites
+preds_mat <- exp(bases_pred %*% coefs_mat)
+
+# check this has the right dimensions
+identical(dim(preds_mat),
+          c(length(days_pred), n_sites))
+
+# plot one of them to confirm it looks right
+lines(preds_mat[, 1] ~ days_pred,
+      lty = 3,
+      lwd = 2,
+      col = "blue")
 
 
+# to use this in practice, we can run most of this code onces on the available
+# data *before* running the model, to define the knots, training bases, and
+# estimate the coefficients for all sites, for each continuous function. E.g.:
 
+#   knots <- define_knots(n_knots, range(days_pred))
+#   bases_train <- get_bases(days_obs, knots = knots)
+#   coefs_mat <- solve(t(bases_train) %*% bases_train) %*%
+#     t(bases_train) %*% log(mt_obs_mat)
+
+# and then inside the derivative function, we just need to compute the basis
+# functions for the given time point, and evaluate the functions at all sites
+# simultaneously:
+
+#   bases_t <- get_bases(t, knots = knots)
+#   m_t <- exp(bases_t %*% coefs_mat)[1, ]
+
+# e.g.:
+t <- 200.67
+bases_t <- get_bases(t, knots = knots)
+m_t <- exp(bases_t %*% coefs_mat)[1, ]
+m_t
+
+# we can write this slightly more efficiently as:
+diffs <- abs(knots - t)
+bases_t <- diffs ^ 2 * log(diffs)
+m_t <- exp(bases_t %*% coefs_mat)[1, ]
+m_t
+
+# so we need to convert this bit into Tensorflow code, and write a full
+# Tensorflow version of the derivative function
