@@ -361,3 +361,50 @@ m_t
 
 # so we need to convert this bit into Tensorflow code, and write a full
 # Tensorflow version of the derivative function
+
+# write a tensorflow function, where t, knots, and coefs all have an initial
+# batch dimension (used by greta for vectorisation), and where at each slice of
+# the batch dimension, coefs is a matrix with sites as rows and bases as
+# columns.
+
+batch_dim <- 2L
+t_r <- t
+knots_r <- knots
+coefs_mat_r <- coefs_mat
+
+# make t a matrix, and add a batch dimension
+t <- as_tensor(
+  array(t_r,
+        dim = c(1, 1, 1))
+)
+# make this a row vector, with a leading dimension for batches
+knots <- as_tensor(
+  array(knots_r,
+        dim = c(1, 1, n_knots))
+)
+# add initial batch dimension
+coefs_mat <- as_tensor(
+  array(coefs_mat_r,
+        dim = c(1, dim(coefs_mat_r)))
+)
+
+# tile these by the batch dimension, as greta will do
+t <- tf$tile(t, multiples = c(batch_dim, 1L, 1L))
+knots <- tf$tile(knots, multiples = c(batch_dim, 1L, 1L))
+coefs_mat <- tf$tile(coefs_mat, multiples = c(batch_dim, 1L, 1L))
+
+# function to evaluate the spline at a time t, in tensorflow code
+tf_evaluate_spline <- function(t, knots, coefs_mat) {
+  # compute bases
+  diffs <- abs(t - knots)
+  bases_t <- diffs ^ 2 * log(diffs)
+  # make prediction (not yet transformed to support of parameter)
+  pred <- tf$matmul(bases_t, coefs_mat)
+  # transpose back to a column vector
+  tf$transpose(pred, perm = c(0L, 2L, 1L))
+}
+
+s_t <- tf_evaluate_spline(t = t,
+                          knots = knots,
+                          coefs_mat = coefs_mat)
+m_t <- exp(s_t)
