@@ -101,13 +101,13 @@ m <- function(day) {
 # higher in the peak season (higher temperature and humidity)
 a <- function(day) {
   s <- seasonality(day)
-  plogis(-2 + 0.5 * s)
+  plogis(-2 + 0.1 * s)
 }
 
 g <- function(day) {
   # model average mosquito lifespan based on seasonality
   s <- seasonality(day)
-  lifespan <- exp(2 + 0.5 * s)
+  lifespan <- exp(2 + 0.1 * s)
   # instantaeous death rate is 1 divided by lifespan
   1 / lifespan
 }
@@ -115,7 +115,7 @@ g <- function(day) {
 # plot these to check
 
 n_years <- 3
-day <- seq(0, n_years * 365, length.out = 1e3)
+day <- seq(0, n_years * 365, by = 30)
 
 par(mfrow = c(2, 2))
 plot(seasonality(day) ~ day,
@@ -155,17 +155,16 @@ params <- list(
 
 # burn in for 1 year prior to simulations (start at 0 months, evaluate from 12
 # months onwards)
-days_burnin <- 365 * 5
+days_burnin <- 365 * 1
 days_sim <- 365 * 4
 days_total <- days_burnin + days_sim
-days <- seq(0, days_total, by = 1)
+days <- seq(0, days_total, by = 30) - days_burnin
 init <- c(x = 0.1, z = 0.01)
 out <- ode(init, days, deriv, params)
 
-# crop out the burnin, and relabel the months
-keep <- days > days_burnin
+# crop out the burnin
+keep <- days > 0
 out_sim <- out[keep, ]
-out_sim[, "time"] <- out_sim[, "time"] - days_burnin
 
 # compute the force of infection
 foi <- m(out_sim[, "time"]) *
