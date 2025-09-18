@@ -193,3 +193,116 @@ plot(inf_inc ~ time,
      type = "l",
      main = "Infection incidence")
 
+# 2. Write Tensorflow code for spline interpolation of monthly timeseries data
+# to evaluate as a continuous function.
+
+# When fitting the model, we will have at-best monthly estimates of our
+# time-varying parameters (mosquito abundance, biting, and survival) or the
+# covariates we use to model them. To use computationally-efficient adaptive ODE
+# solvers, we need to be able to evaluate those time-varying parameters at any
+# time in between these observations, within the tensorflow code and greta
+# model. To do this, we can use spline interpolation. We can then write a
+# tensorflow function to make computationally efficient evaluations of those
+# splines.
+
+# We will use thin-plate splines with radial basis functions, since this option
+# allows us to compute the bases for a new time very efficiently inside the
+# derivative function. See e.g.:
+# https://en.wikipedia.org/wiki/Thin_plate_spline#Radial_basis_function
+
+# Here is example code for thin plate spline interpolation (other types of
+# splines can be implemented using e.g. the splines package)
+
+# we observe data on a monthly timestep for two years
+months_obs <- 1:24
+days_obs <- months_obs * 30
+mt_obs <- m(days_obs)
+
+# we want to evaluate on a much smaller timestep
+dt <- 0.5
+days_pred <- seq(0, 2 * 365, by = dt)
+
+# plot the truth (which we won't have access to in a real application where
+# covariates are monthly) and the data we observe as points
+par(mfrow = c(1, 1))
+plot(m(days_pred) ~ days_pred,
+     type = "l")
+points(mt_obs ~ days_obs)
+
+# now we build RBF TP splines to estimate the function. First we define the
+# knots at which to evaluate the splines, then we compute the basis functions at
+# the training times, then we estimate the coefficients using a linear model
+# (transformed to have appropriate support), then we compute the basis functions
+# at the prediction times, and finally we apply the fitted coefficients to
+# estimate the function values at those times
+
+# function to define appropraite knots over a range of values (we could just use
+# the months for which we have data, but this is more accurate in general). We
+# must pass in the required number of knots, the range of values we want to
+# cover (this should be the range of values we want to predict to), and whether
+# to place knots on the boundaries (on one each of the lower and upper limits).
+define_knots <- function(n_knots, limits, on_boundary = TRUE) {
+
+  # if we are not placing knots on the boundary, add two boundary knots which we
+  # will later delete, so that we return n_knots knots
+  if(!on_boundary) {
+    n_knots <- n_knots + 2
+  }
+
+  # space the knots out evenly between the limits
+  knots <- seq.int(from = limits[1],
+                   to = limits[2],
+                   length.out = n_knots)
+
+  # if we are not placing knots on the boundary, remove the two boundary knots
+  # so that we return n_knots knots
+  if(!on_boundary) {
+    knots <- knots[-c(1, n_knots + 2)]
+  }
+  knots
+}
+
+# function to evaluate the basis functions at locations x, given knots, and
+# assuming we are working in 1 dimension (the function is different for higher
+# dimensions as we must use Euclidean distance)
+get_bases <- function(x, knots) {
+  diffs <- abs(outer(x, knots, FUN = "-"))
+  diffs ^ 2 * log(diffs)
+}
+
+# how many knots to use to interpolate this timeseries
+n_knots <- length(mt_obs)
+
+# get the knot locations
+knots <- define_knots(n_knots, range(days_pred))
+
+# get bases for training data
+bases_train <- get_bases(days_obs, knots = knots)
+
+# construct a spline, on the  *log* of m, to ensure that values of m are
+# always positive (we will transform back later)
+spline_mod <- lm(log(mt_obs) ~ bases_train - 1)
+
+# extract the coefficients
+coefs <- spline_mod$coefficients
+
+# get the basis functions at the prediction locations
+bases_pred <- get_bases(days_pred, knots = knots)
+
+# evaluate the spline and apply the exponential function to get predictions of
+# m, ensuring they are positive
+pred <- exp(bases_pred %*% coefs)
+
+lines(pred ~ days_pred,
+      col = "red",
+      lty = 2,
+      lwd = 2)
+
+# This does a good job on this simple and smooth example, even with
+# extrapolation at the edges. Though if that chnges with the real data, we can
+# fit the spline with additional values on either side (repeating data values if
+# needed) to minimise the bias.
+
+
+
+
