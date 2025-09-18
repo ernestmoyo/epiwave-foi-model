@@ -28,6 +28,8 @@
 # load greta first (even though we aren't using it) so that we are using the
 # same version of tensorflow
 library(greta)
+# work around a bug stopping the session from working when offline
+Sys.setenv(UV_OFFLINE = 1)
 library(tensorflow)
 library(deSolve)
 
