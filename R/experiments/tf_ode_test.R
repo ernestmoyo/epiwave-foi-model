@@ -478,188 +478,212 @@ g_star_coefs <- get_spline_coefs(log(g_star_observed),
 
 # greta batch_size
 
-# arguments to the function evaluating the integral:
-
-# burnin period, in the time units of the derivative
-burnin <- burnin_days
-
-# times to evaluate integral (first value set in the negative () to enable burnin)
-times <- days_evaluate
-
-# initial conditions
-x_0 <- 0.1
-z_0 <- 0.1
-
-# tensors (with batch dimensions matching greta) for the model parameters we
-# want to do inference on:
-m_int <- as_tensor(array(0, dim = c(1, 1, 1)))
-m_slope <- as_tensor(array(1, dim = c(1, 1, 1)))
-a_int <- as_tensor(array(0, dim = c(1, 1, 1)))
-a_slope <- as_tensor(array(1, dim = c(1, 1, 1)))
-g_int <- as_tensor(array(0, dim = c(1, 1, 1)))
-g_slope <- as_tensor(array(1, dim = c(1, 1, 1)))
-
-# scalar r objects for the model parameters we will tret as fixed (we will not
-# evaluate derivatives with respect to these)
-b <- params$b
-c <- params$c
-r <- params$r
-
-# knots for the spline interpolation of continuous functions
-knots <- knots
-
-# pre-computed coefficient matrices for the predetermined parts of the
-# continuous functions at each site i: m_i(t), a_i(t), g_i(t)
-m_star_coefs <- m_star_coefs
-a_star_coefs <- a_star_coefs
-g_star_coefs <- g_star_coefs
-
-# parameters to control approximation quality (?? - check helpfile when have
-# WiFi)
-rtol <- 0.001
-atol <- 1e-06
 
 
+integrate_RMd <- function(
+    # burnin period, in the time units of the derivative
+    burnin,
+    # times to evaluate integral (first value set in the negative () to enable burnin)
+    times,
+    # initial conditions
+    x_0, z_0,
+    # tensors (with batch dimensions matching greta) for the model parameters we
+    # want to do inference on:
+    m_int, m_slope,
+    a_int, a_slope,
+    g_int, g_slope,
+    # scalar r objects for the model parameters we will tret as fixed (we will not
+    # evaluate derivatives with respect to these)
+    b, c, r,
+    # knots for the spline interpolation of continuous functions
+    knots,
+    # pre-computed coefficient matrices for the predetermined parts of the
+    # continuous functions at each site i: m_i(t), a_i(t), g_i(t)
+    m_star_coefs, a_star_coefs, g_star_coefs,
+    # parameters to control approximation quality (?? - check helpfile when have
+    # WiFi)
+    rtol = 0.001,
+    atol = 1e-06) {
 
-# mock up the inside of function:
+  # transform some things into tensors:
 
-# transform some things into tensors:
+  # convert the fixed parameters to tensors
+  b <- as_tensor(b)
+  c <- as_tensor(c)
+  r <- as_tensor(r)
 
-# convert the fixed parameters to tensors
-b <- as_tensor(b)
-c <- as_tensor(c)
-r <- as_tensor(r)
+  # convert the knots and coefficient matrices into tensors, of the correct
+  # dimensions: [batch_size, rows, columns]
 
-# convert the knots and coefficient matrices into tensors, of the correct
-# dimensions: [batch_size, rows, columns]
+  # make knots a row vector, with an initial batch dimension, to match matrix
+  # equations
+  knots <- as_tensor(
+    array(knots,
+          dim = c(1, 1, length(knots)))
+  )
 
-# make knots a row vector, with an initial batch dimension, to match matrix
-# equations
-knots <- as_tensor(
-  array(knots,
-        dim = c(1, 1, length(knots)))
-)
+  # add initial batch dimension to each of the coefficient matrices
+  m_star_coefs <- as_tensor(
+    array(m_star_coefs,
+          dim = c(1, dim(m_star_coefs)))
+  )
 
-# add initial batch dimension to each of the coefficient matrices
-m_star_coefs <- as_tensor(
-  array(m_star_coefs,
-        dim = c(1, dim(m_star_coefs)))
-)
+  a_star_coefs <- as_tensor(
+    array(a_star_coefs,
+          dim = c(1, dim(a_star_coefs)))
+  )
 
-a_star_coefs <- as_tensor(
-  array(a_star_coefs,
-        dim = c(1, dim(a_star_coefs)))
-)
+  g_star_coefs <- as_tensor(
+    array(g_star_coefs,
+          dim = c(1, dim(g_star_coefs)))
+  )
 
-g_star_coefs <- as_tensor(
-  array(g_star_coefs,
-        dim = c(1, dim(g_star_coefs)))
-)
+  # the initial states must have the same dimensions as expected of the
+  # derivatives: [batch_size, n_sites, n_states], with n_states = 2 (x then z):
+  n_sites <- dim(m_star_coefs)[3]
 
-# the initial states must have the same dimensions as expected of the
-# derivatives: [batch_size, n_sites, n_states], with n_states = 2 (x then z):
-n_sites <- dim(m_star_coefs)[3]
+  # check dims, incl. batch size
+  x_0 <- as_tensor(array(rep(x_0, n_sites),
+                         dim = c(1, n_sites, 1)))
+  z_0 <- as_tensor(array(rep(z_0, n_sites),
+                         dim = c(1, n_sites, 1)))
 
-# check dims, incl. batch size
-x_0 <- as_tensor(array(rep(x_0, n_sites),
-                       dim = c(1, n_sites, 1)))
-z_0 <- as_tensor(array(rep(z_0, n_sites),
-                       dim = c(1, n_sites, 1)))
+  # combined initial states
+  y_0 <- tf$concat(list(x_0, z_0),
+                   axis = 2L)
 
-# combined initial states
-y_0 <- tf$concat(list(x_0, z_0),
-                 axis = 2L)
+  # convert time parameters
+  burnin <- as_tensor(burnin, dtype = tf$int32)
+  times <- as_tensor(as_tensor(times, dtype = tf$int32))
 
-# convert time parameters
-burnin <- as_tensor(burnin, dtype = tf$int32)
-times <- as_tensor(as_tensor(times, dtype = tf$int32))
+  # ODE solver control parameters
+  rtol <- as_tensor(rtol)
+  atol <- as_tensor(atol)
 
-# ODE solver control parameters
-rtol <- as_tensor(rtol)
-atol <- as_tensor(atol)
+  # define the derivative function
 
-# define the derivative function
+  # We need to decide how to pass in each parameter object. They only need to be
+  # passed in if we want to autodiff them, otherwise we can pass them via lexical
+  # scoping. We therefore should not need to pass in the spline objects (knots or
+  # each of the coefficient matrices) since these are fixed, not the fixed scalar
+  # parameters b, c, and r, but we will need to pass in as arguments the model
+  # parameters we want to do inference on: the parameters modifying m(t), a(t),
+  # and g(t).
 
-# We need to decide how to pass in each parameter object. They only need to be
-# passed in if we want to autodiff them, otherwise we can pass them via lexical
-# scoping. We therefore should not need to pass in the spline objects (knots or
-# each of the coefficient matrices) since these are fixed, not the fixed scalar
-# parameters b, c, and r, but we will need to pass in as arguments the model
-# parameters we want to do inference on: the parameters modifying m(t), a(t),
-# and g(t)
+  # For lexical scoping, this function must be defined here, after the
+  # parameters that it uses
 
-tf_deriv <- function(t, y,
-                     m_int, m_slope,
-                     a_int, a_slope,
-                     g_int, g_slope) {
+  tf_deriv <- function(t, y,
+                       m_int, m_slope,
+                       a_int, a_slope,
+                       g_int, g_slope) {
 
-  # t will be dimensionless when used in the ode solver, we need to expand out t
-  # to have same dim as a scalar constant (in greta this is 3D) so that it can
-  # be used in the same way as the greta array in the R function
-  t <- tf$reshape(t, shape = shape(1, 1, 1))
+    # t will be dimensionless when used in the ode solver, we need to expand out t
+    # to have same dim as a scalar constant (in greta this is 3D) so that it can
+    # be used in the same way as the greta array in the R function
+    t <- tf$reshape(t, shape = shape(1, 1, 1))
 
-  # evaluate the splines to evaluate the approximated continuous functions of
-  # m_star_i(t), a_star_i(t), g_star_i(t), the pre-computed parameters for all
-  # sites i at this time
-  bases_t <- tf_get_bases(t, knots)
-  log_m_star_t <- tf_compute_spline(bases_t, m_star_coefs)
-  logit_a_star_t <- tf_compute_spline(bases_t, a_star_coefs)
-  log_g_star_t <- tf_compute_spline(bases_t, g_star_coefs)
+    # evaluate the splines to evaluate the approximated continuous functions of
+    # m_star_i(t), a_star_i(t), g_star_i(t), the pre-computed parameters for all
+    # sites i at this time
+    bases_t <- tf_get_bases(t, knots)
+    log_m_star_t <- tf_compute_spline(bases_t, m_star_coefs)
+    logit_a_star_t <- tf_compute_spline(bases_t, a_star_coefs)
+    log_g_star_t <- tf_compute_spline(bases_t, g_star_coefs)
 
-  # apply the model parameters to adjust these, and then transform each to have
-  # the expected support for that parameter (note: tf$nn$sigmoid is the same as
-  # the inverse logit function)
-  m_t <- exp(m_int + m_slope * log_m_star_t)
-  a_t <- tf$nn$sigmoid(a_int + a_slope * logit_a_star_t)
-  g_t <- exp(g_int + g_slope * log_g_star_t)
+    # apply the model parameters to adjust these, and then transform each to have
+    # the expected support for that parameter (note: tf$nn$sigmoid is the same as
+    # the inverse logit function)
+    m_t <- exp(m_int + m_slope * log_m_star_t)
+    a_t <- tf$nn$sigmoid(a_int + a_slope * logit_a_star_t)
+    g_t <- exp(g_int + g_slope * log_g_star_t)
 
-  # pull out x and z from y. These will be in the same orientation as the
-  # initial state, so assume this abject has dimensions [batch_size, n_sites,
-  # n_states], with n_states = 2 (x then z):
-  x <- y[, , 0L, drop = FALSE]
-  z <- y[, , 1L, drop = FALSE]
+    # pull out x and z from y. These will be in the same orientation as the
+    # initial state, so assume this abject has dimensions [batch_size, n_sites,
+    # n_states], with n_states = 2 (x then z):
+    x <- y[, , 0L, drop = FALSE]
+    z <- y[, , 1L, drop = FALSE]
 
-  # derivatives for the Ross MacDonald model of the fractions of
-  # people (x) and mosquitoes(z) infected
-  dx_dt = m_t * a_t * b * z * (1 - x) - r * x
-  dz_dt = a_t * c * x * (1 - z) - g_t * z
+    # derivatives for the Ross MacDonald model of the fractions of
+    # people (x) and mosquitoes(z) infected
+    dx_dt = m_t * a_t * b * z * (1 - x) - r * x
+    dz_dt = a_t * c * x * (1 - z) - g_t * z
 
-  # combine the derivatives along the final dimension to have the same shape as
-  # the same as the initial value and the inputs, and return
-  tf$concat(list(dx_dt, dz_dt),
-            axis = 2L)
+    # combine the derivatives along the final dimension to have the same shape as
+    # the same as the initial value and the inputs, and return
+    tf$concat(list(dx_dt, dz_dt),
+              axis = 2L)
 
+  }
+
+  # get tensorflow probability ODE function object
+  tf_int <- greta:::tfp$math$ode
+
+  # set up the DoPri solver
+  solver <- tf_int$DormandPrince(rtol = rtol, atol = atol)
+
+  # get the solution at these times
+  integral <- solver$solve(
+    ode_fn = tf_deriv,
+    initial_time = -burnin,
+    initial_state = y_0,
+    solution_times = times,
+    constants = list(
+      m_int = m_int,
+      m_slope = m_slope,
+      a_int = a_int,
+      a_slope = a_slope,
+      g_int = g_int,
+      g_slope = g_slope
+    ))$states
+
+  # TFP prepends a dimension for the times, so the dimensions of the states are
+  # now: [n_times, batch_size, n_sites, n_states].To use this in greta, we must
+  # put the batch dimension first. So rearrange to: [batch_size, n_times, n_sites,
+  # n_states]
+  permutation <- seq_along(dim(integral)) - 1L
+  permutation[1:2] <- permutation[2:1]
+  integral <- tf$transpose(integral, perm = permutation)
+  integral
 }
 
-# get tensorflow probability ODE function object
-tf_int <- greta:::tfp$math$ode
+integral <- integrate_RMd(
+  # burnin period, in the time units of the derivative
+  burnin = burnin_days,
+  # times to evaluate integral (first value set in the negative () to enable burnin)
+  times = days_evaluate,
+  # initial conditions
+  x_0 = 0.1,
+  z_0 = 0.1,
+  # tensors (with batch dimensions matching greta) for the model parameters we
+  # want to do inference on:
+  m_int = as_tensor(array(0, dim = c(1, 1, 1))),
+  m_slope = as_tensor(array(1, dim = c(1, 1, 1))),
+  a_int = as_tensor(array(0, dim = c(1, 1, 1))),
+  a_slope = as_tensor(array(1, dim = c(1, 1, 1))),
+  g_int = as_tensor(array(0, dim = c(1, 1, 1))),
+  g_slope = as_tensor(array(1, dim = c(1, 1, 1))),
+  # scalar r objects for the model parameters we will tret as fixed (we will not
+  # evaluate derivatives with respect to these)
+  b = params$b,
+  c = params$c,
+  r = params$r,
+  # knots for the spline interpolation of continuous functions
+  knots = knots,
+  # pre-computed coefficient matrices for the predetermined parts of the
+  # continuous functions at each site i: m_i(t), a_i(t), g_i(t)
+  m_star_coefs = m_star_coefs,
+  a_star_coefs = a_star_coefs,
+  g_star_coefs = g_star_coefs,
+  # parameters to control approximation quality (?? - check helpfile when have
+  # WiFi)
+  rtol = 0.001,
+  atol = 1e-06)
 
-# set up the DoPri solver
-solver <- tf_int$DormandPrince(rtol = rtol, atol = atol)
 
-# get the solution at these times
-integral <- solver$solve(
-  ode_fn = tf_deriv,
-  initial_time = -burnin,
-  initial_state = y_0,
-  solution_times = times,
-  constants = list(
-    m_int = m_int,
-    m_slope = m_slope,
-    a_int = a_int,
-    a_slope = a_slope,
-    g_int = g_int,
-    g_slope = g_slope
-  ))$states
 
-# TFP prepends a dimension for the times, so the dimensions of the states are
-# now: [n_times, batch_size, n_sites, n_states].To use this in greta, we must
-# put the batch dimension first. So rearrange to: [batch_size, n_times, n_sites,
-# n_states]
-permutation <- seq_along(dim(integral)) - 1L
-permutation[1:2] <- permutation[2:1]
-integral <- tf$transpose(integral, perm = permutation)
-
+# extract timeseries of each state parameter (1st batch, all times, first site,
+# then each state)
 x_r <- as.array(integral[0L, , 0L, 0L])
 z_r <- as.array(integral[0L, , 0L, 1L])
 
@@ -691,14 +715,13 @@ lines(z ~ time,
       col = "red")
 
 
-# see how it deteriorates with control parameters
-
-# wrap this up in a function
-
 # do tf_function to compile it
+tffun_integrate_RMd <- tensorflow::tf_function(integrate_RMd)
+# this needs debugging, and probably an input signature to be efficient!
+
 
 # make the model parameters have a batch size
 
 # see how the compute time varies with the number of sites
 
-# speed test it, with a bat
+# speed test it, with a batch dimensions and varying number of sites
