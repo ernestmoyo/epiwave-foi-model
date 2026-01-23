@@ -1,4 +1,118 @@
+# ===========================================
+# .gitignore for epiwave-foi-model
+# ===========================================
+
+# -------------------------------------------
+# R / RStudio
+# -------------------------------------------
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+*.Rproj.user/
+
+# -------------------------------------------
+# DATA FILES - DO NOT SYNC
+# -------------------------------------------
+data/
+Data/
+DATA/
+raw_data/
+raw-data/
+processed_data/
+output_data/
+
+# Common data file extensions
+*.csv
+*.xlsx
+*.xls
+*.rds
+*.RDS
+*.rda
+*.RData
+*.sav
+*.dta
+*.dbf
+*.shp
+*.shx
+*.prj
+*.cpg
+*.gpkg
+*.geojson
+*.tif
+*.tiff
+*.nc
+*.hdf
+*.h5
+
+# Exception: keep example/test data if needed
+!data/example/
+!tests/data/
+
+# -------------------------------------------
+# LARGE FILES
+# -------------------------------------------
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+
+# -------------------------------------------
+# SENSITIVE / CREDENTIALS
+# -------------------------------------------
+*.env
+.env
+.Renviron
+credentials/
+secrets/
+*.pem
+*.key
+
+# -------------------------------------------
+# OUTPUT FILES
+# -------------------------------------------
+outputs/
+results/
+figures/
+plots/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+!README_files/
+
+# -------------------------------------------
+# TEMPORARY FILES
+# -------------------------------------------
+*.tmp
+*.temp
+*.log
+*.bak
+*~
+.DS_Store
+Thumbs.db
+
+# -------------------------------------------
+# PYTHON (if using reticulate)
+# -------------------------------------------
+__pycache__/
+*.py[cod]
+.Python
+venv/
+.venv/
+
+# -------------------------------------------
+# MODEL OUTPUTS
+# -------------------------------------------
+*.stan
+*.rds
+mcmc_output/
+model_fits/
+
+# -------------------------------------------
+# MISC
+# -------------------------------------------
+write-test-*
+pull_nicks_branch.sh
+
