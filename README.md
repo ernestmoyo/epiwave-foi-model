@@ -93,5 +93,9 @@ The modeling workflow includes:
 
 **Ernest Moyo**
 
--   **Date:** 2025-09-10
--   **Email:** `ernestmoyo35@gmail.com | moyoe@nm-aist.ac.tz`
+-   **Date:** 2026-01-24
+-   Connect with me on [LinkedIn][linkedin-profile]
+
+[linkedin-profile]: https://www.linkedin.com/in/ernest-moyo-96aa3813/
+
+
