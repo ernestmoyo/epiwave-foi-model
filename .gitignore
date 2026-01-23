@@ -1,4 +1,79 @@
+
+# ===========================================
+
+# .gitignore for epiwave-foi-model
+
+# ===========================================
+
+# R / RStudio
+
 .Rproj.user
+
 .Rhistory
+
 .RData
+
 .Ruserdata
+
+# DATA FILES - DO NOT SYNC
+
+data/
+
+Data/
+
+raw_data/
+
+processed_data/
+
+# Data file extensions
+
+*.csv
+
+*.xlsx
+
+*.xls
+
+*.rds
+
+*.RDS
+
+*.rda
+
+*.RData
+
+*.shp
+
+*.tif
+
+*.tiff
+
+*.nc
+
+# Large files
+
+*.zip
+
+*.tar.gz
+
+# Credentials
+
+.env
+
+.Renviron
+
+# Temp files
+
+*.tmp
+
+*.log
+
+.DS_Store
+
+Thumbs.db
+
+# Python
+
+__pycache__/
+
+venv/
+
