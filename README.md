@@ -4,7 +4,9 @@
 
 ## Overview
 
-The **EpiWave FOI Model** is a computational framework for generating malaria risk maps that integrate entomological data (vector abundance, biting rates, mortality) with epidemiological surveillance data. Developed as part of Ernest Moyo's PhD research at NM-AIST in collaboration with Vector Atlas, this framework addresses a critical gap in operational malaria risk mapping: **how to efficiently incorporate vector dynamics into disease models without computational infeasibility**.
+The **EpiWave FOI Model** is a computational framework for generating malaria risk maps that integrate entomological data (vector abundance, biting rates, mortality) with epidemiological surveillance data. Building on the [epiwave.mapping](https://github.com/idem-lab/epiwave.mapping) framework developed by Nick Golding's group, this project extends it with a mechanistic transmission component (Ross-Macdonald ODE) and vector data integration.
+
+Developed as part of Ernest Moyo's PhD research at NM-AIST in collaboration with Vector Atlas, this framework addresses a critical gap in operational malaria risk mapping: **how to efficiently incorporate vector dynamics into disease models without computational infeasibility**.
 
 ### Key Innovation
 
@@ -102,5 +104,5 @@ epiwave-foi-model/
 
 **Ernest Moyo** — PhD Candidate, NM-AIST / Vector Atlas
 
-- ernest.moyo@nm-aist.ac.tz
+- moyoe@nm-aist.ac.tz
 - [LinkedIn](https://www.linkedin.com/in/ernest-moyo-96aa3813/)
