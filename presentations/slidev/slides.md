@@ -73,6 +73,10 @@ src: ./pages/04-stage1-code.md
 ---
 
 ---
+src: ./pages/04b-code-architecture.md
+---
+
+---
 src: ./pages/05-stage2-calibration.md
 ---
 

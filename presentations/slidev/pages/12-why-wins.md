@@ -50,12 +50,12 @@ layout: default
 
 ```mermaid {scale: 0.4}
 graph LR
-    VA["Vector Atlas<br/>m, a, g"] --> S1["Stage 1<br/>Ross-Macdonald ODE"]
-    TEMP["Temperature<br/>Models"] --> S1
-    ITN["Interventions<br/>ITN / IRS"] --> S1
-    S1 -->|"I*(s,t)"| S2["Stage 2<br/>NegBin Calibration"]
+    VA["Vector Atlas<br/>get_fixed_m/a/g()"] --> INT["apply_interventions()"]
+    INT --> S1["solve_ross_macdonald<br/>_multi_site()"]
+    S1 -->|"compute_mechanistic<br/>_prediction()"| ISTAR["I*(s,t)"]
+    ISTAR --> S2["fit_epiwave_with<br/>_offset()"]
     CASES["DHIS2<br/>Case Data"] --> S2
-    S2 -->|"MCMC<br/>(2 params)"| POST["Posterior<br/>Predictions"]
+    S2 -->|"greta::mcmc()<br/>(2 params)"| POST["Posterior<br/>Predictions"]
 ```
 
 <!--

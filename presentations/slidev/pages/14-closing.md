@@ -31,7 +31,7 @@ class: text-left
 <div class="footer-bar">
 <span>3/5/2026</span>
 <span style="font-style: italic;">Integrating Spatial Data on Malaria Vectors into Malaria Risk Mapping Approaches</span>
-<span>14</span>
+<span>15</span>
 </div>
 
 <!--

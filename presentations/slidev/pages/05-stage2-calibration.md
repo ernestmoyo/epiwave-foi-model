@@ -30,7 +30,7 @@ $$\text{size} = \exp(\log\text{\_size})$$
 
 <div class="ml-4 mt-2">
 
-**greta implementation:**
+**greta implementation** (from `epiwave-foi-model.R`):
 
 ```r {lines:true}
 fit_epiwave_with_offset <- function(
@@ -41,13 +41,14 @@ fit_epiwave_with_offset <- function(
   cases_vec  <- as.vector(observed_cases)
   I_star_vec <- as.vector(I_star)
 
-  # Priors — only 2 free parameters
+  # Priors (only 2 free parameters)
   log_rate <- normal(-2, 1)
   log_size <- normal(3, 1)
   size     <- exp(log_size)
 
   # Linear predictor with offset
-  log_mu <- log_rate + log(I_star_vec + 1e-10)
+  log_mu <- log_rate +
+    log(I_star_vec + 1e-10)
   mu     <- exp(log_mu)
   prob   <- size / (size + mu)
 
@@ -62,11 +63,11 @@ fit_epiwave_with_offset <- function(
 </div>
 
 <!--
-Stage 2 is where we calibrate to observed case data. The structural equation uses log(I-star) — our mechanistic prediction from Stage 1 — as a fixed offset. The parameter lambda captures the log reporting rate, which is the only identifiable scaling parameter.
+Stage 2 is where we calibrate to observed case data. The structural equation uses log(I-star) — our mechanistic prediction from Stage 1 — as a fixed offset. The parameter lambda captures the log reporting rate.
 
-We use a Negative Binomial likelihood because it naturally handles overdispersion. The log_size parameter controls overdispersion on the log scale — when size is large, we recover the Poisson as a special case. We parameterise on the log scale with Normal(3,1) to give HMC a smooth, unconstrained posterior surface.
+We use a Negative Binomial likelihood because it naturally handles overdispersion. The log_size parameter controls overdispersion on the log scale — when size is large, we recover the Poisson as a special case.
 
-The greta implementation on the right shows how compact this is — the entire model specification is just a few lines. We define two priors, construct the linear predictor with the mechanistic offset, and specify the likelihood. That's it — ready for HMC sampling.
+The greta implementation on the right matches the actual code in epiwave-foi-model.R exactly. The entire model specification is just a few lines — two priors, a linear predictor with the mechanistic offset, and the likelihood. That's it — ready for HMC sampling.
 
-The Normal(3,1) prior on log_size gives a median size of ~20, with 95% CI from ~1 to ~400 — broad but regularising. This replaced an earlier Beta(1,9) prior on phi that caused boundary issues with ESS=82.
+The Normal(3,1) prior on log_size gives a median size of ~20, with 95% CI from ~1 to ~400. This replaced an earlier Beta(1,9) prior on phi that caused boundary issues with ESS=82. The reparameterisation improved ESS to 489.
 -->
