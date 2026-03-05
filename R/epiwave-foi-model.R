@@ -9,9 +9,9 @@
 #
 # PhD Objective 2 - Framework Development
 # ============================================================
-# This code implements the following review and sugested approach from supervisor, Prof Nick:
+# This code implements the following review and suggested approach from supervisor, Prof Nick:
 #
-# "Don't do statistical inference on the dynamic part of the model. Instead,
+#  Not to do statistical inference on the dynamic part of the model. Instead,
 #  use fixed values for entomological parameters (VA estimates or temperature
 #  models) and solve dynamics ONCE per pixel to get z_t.
 #  Then compute: I*_t = m_t × a_t × b_t × z_t
@@ -619,8 +619,6 @@ compute_mechanistic_prediction <- function(m_matrix,
 #' @param observed_cases Matrix [n_times × n_sites] of observed malaria case counts
 #' @param I_star Matrix [n_times × n_sites] of mechanistic incidence predictions
 #'   from Stage 1 (used only when use_mechanistic=TRUE)
-#' @param spatial_coords Matrix [n_sites × 2] of spatial coordinates (longitude, latitude)
-#' @param temporal_coords Numeric vector [n_times] of temporal indices or dates
 #' @param use_mechanistic Logical. If TRUE, includes I_star as offset (vector-informed model).
 #'   If FALSE, standard geostatistical model without mechanistic information (comparison baseline)
 #'
@@ -716,8 +714,8 @@ compute_mechanistic_prediction <- function(m_matrix,
 #'
 #'   Priors:
 #'     log_rate ~ Normal(-2, 1)     [reporting rate on log scale; exp(-2) ~ 13%]
-#'     phi      ~ Beta(1, 9)        [overdispersion = 1/size; E[phi]=0.1, nearly Poisson]
-#'     size     = (1 - phi) / phi   [derived; bounded, better HMC geometry than log(size)]
+#'     log_size ~ Normal(3, 1)      [log(NB size); unconstrained; median size~20]
+#'     size     = exp(log_size)       [derived; HMC-friendly reparameterisation]
 #'
 #' @section Background MCMC:
 #'   Use mcmc_background_job.R to run sampling in a background RStudio job.
@@ -753,11 +751,13 @@ fit_epiwave_with_offset <- function(observed_cases,
   # reporting rate and the mechanistic scale factor. Prior centred on exp(-2)~13%.
   log_rate <- normal(-2, 1)
 
-  # phi = 1/size (overdispersion). Beta(1,9) => E[phi]=0.1, mostly Poisson-like.
-  # Reparameterising as phi rather than size avoids heavy-tailed HMC geometry
-  # when the posterior is near-Poisson (size -> Inf).
-  phi  <- beta(1, 9)
-  size <- (1 - phi) / phi   # derived; size in (0, Inf)
+  # log_size: log(NB size) on unconstrained scale — gives HMC a smooth
+  # surface when posterior is near-Poisson (size -> Inf, log_size -> large).
+  # N(3,1) prior => median size ~20, 95% CI [~1, ~400] — broad but regularising.
+  # This fixes the ESS=82 convergence failure seen with Beta(phi) parameterisation
+  # when the mechanistic offset explains nearly all variation (phi -> 0 boundary).
+  log_size <- normal(3, 1)
+  size     <- exp(log_size)   # size in (0, Inf), unconstrained for HMC
 
   # ── Linear predictor ────────────────────────────────────────────────────────
   log_mu <- if (use_mechanistic) {
@@ -772,22 +772,9 @@ fit_epiwave_with_offset <- function(observed_cases,
   distribution(cases_vec) <- negative_binomial(size, prob)
 
   # ── Return model tracking key parameters ─────────────────────────────────────
-  model(log_rate, phi)
+  model(log_rate, log_size)
 }
 
-.greta_is_available <- function() {
-  if (!requireNamespace("greta",    quietly = TRUE)) return(FALSE)
-  if (!requireNamespace("greta.gp", quietly = TRUE)) return(FALSE)
-  tryCatch({
-    suppressPackageStartupMessages({
-      library(greta,    quietly = TRUE)
-      library(greta.gp, quietly = TRUE)
-    })
-    x <- greta::normal(0, 1)
-    greta::greta_array(x)
-    TRUE
-  }, error = function(e) FALSE)
-}
 
 #' Simulation-Estimation Study: Vector-Informed vs Standard Geostatistical Models
 #'
@@ -800,14 +787,18 @@ fit_epiwave_with_offset <- function(observed_cases,
 #' @param include_interventions Logical. Simulate ITN scale-up scenario (default: TRUE)
 #'
 #' @return List with true_incidence, observed_cases, mechanistic_prediction,
-#'   model_with_mech (NULL if greta unavailable), model_without_mech (NULL if
-#'   greta unavailable), spatial_coords, times, true_params, greta_available.
+#'   model_with_mech, model_without_mech, spatial_coords, times, true_params.
+#'
 #'
 #' @export
 simulate_and_estimate <- function(n_sites = 10,
                                   n_times = 48,
                                   true_params = NULL,
-                                  include_interventions = TRUE) {
+                                  include_interventions = TRUE,
+                                  run_mcmc = TRUE,
+                                  n_samples = 1000,
+                                  warmup = 500,
+                                  chains = 2) {
 
   cat("=================================================================\n")
   cat("  SIMULATION-ESTIMATION STUDY\n")
@@ -894,37 +885,70 @@ simulate_and_estimate <- function(n_sites = 10,
     z_matrix = z_true, population_matrix = pop_matrix
   )
 
-  # ── 2 & 3. Stage 2 greta models (skipped gracefully if TF unavailable) ─
-  greta_ok <- .greta_is_available()
-
-  if (greta_ok) {
-    cat("\n[2/5] Constructing vector-informed model (WITH mechanistic offset)...\n")
-    model_with_mech <- fit_epiwave_with_offset(
-      observed_cases = observed_cases, I_star = I_star_mech,
-      spatial_coords = spatial_coords, temporal_coords = 1:length(times),
-      use_mechanistic = TRUE
+  # ── 2 & 3. Stage 2 — build models AND run MCMC ──────────────────────────────
+  cat("\n[2/5] Building & sampling vector-informed model (WITH mechanistic offset)...\n")
+  model_with_mech <- fit_epiwave_with_offset(
+    observed_cases  = observed_cases,
+    I_star          = I_star_mech,
+    use_mechanistic = TRUE
+  )
+  cat("  - Model constructed\n")
+  draws_with <- NULL
+  if (run_mcmc) {
+    cat(sprintf("  - Running MCMC (%d samples, %d warmup, %d chains)...\n",
+                n_samples, warmup, chains))
+    t0_with <- proc.time()
+    draws_with <- tryCatch(
+      greta::mcmc(model_with_mech, n_samples = n_samples, warmup = warmup,
+                  chains = chains, verbose = FALSE),
+      error = function(e) {
+        cat("  ! MCMC error (WITH):", conditionMessage(e), "\n"); NULL
+      }
     )
-    cat("  - Model constructed successfully\n")
-    cat("  - Ready for MCMC: mcmc(model, n_samples=1000)\n")
-
-    cat("\n[3/5] Constructing standard geostatistical model (WITHOUT vector information)...\n")
-    model_without_mech <- fit_epiwave_with_offset(
-      observed_cases = observed_cases, I_star = I_star_mech,
-      spatial_coords = spatial_coords, temporal_coords = 1:length(times),
-      use_mechanistic = FALSE
-    )
-    cat("  - Model constructed successfully\n")
-    cat("  - Ready for MCMC: mcmc(model, n_samples=1000)\n")
-
+    cat(sprintf("  - Done in %.0fs\n", (proc.time() - t0_with)["elapsed"]))
+    if (!is.null(draws_with)) {
+      rhat_w <- coda::gelman.diag(draws_with, multivariate = FALSE)$psrf
+      ess_w  <- coda::effectiveSize(draws_with)
+      cat(sprintf("  - log_rate : Rhat=%.3f  ESS=%.0f\n",
+                  rhat_w["log_rate",1], ess_w["log_rate"]))
+      cat(sprintf("  - log_size : Rhat=%.3f  ESS=%.0f\n",
+                  rhat_w["log_size",1], ess_w["log_size"]))
+    }
   } else {
-    cat("\n[2/5] SKIPPED — greta/TensorFlow unavailable on this system.\n")
-    cat("  Stage 1 (ODE + mechanistic prediction) is fully functional.\n")
-    cat("  See footer for instructions to enable Stage 2.\n")
-    cat("\n[3/5] SKIPPED — same reason as above.\n")
-    model_with_mech    <- NULL
-    model_without_mech <- NULL
+    cat("  - run_mcmc=FALSE: skipping (model ready, call mcmc() manually)\n")
   }
 
+  cat("\n[3/5] Building & sampling standard model (WITHOUT vector information)...\n")
+  model_without_mech <- fit_epiwave_with_offset(
+    observed_cases  = observed_cases,
+    I_star          = I_star_mech,
+    use_mechanistic = FALSE
+  )
+  cat("  - Model constructed\n")
+  draws_without <- NULL
+  if (run_mcmc) {
+    cat(sprintf("  - Running MCMC (%d samples, %d warmup, %d chains)...\n",
+                n_samples, warmup, chains))
+    t0_wo <- proc.time()
+    draws_without <- tryCatch(
+      greta::mcmc(model_without_mech, n_samples = n_samples, warmup = warmup,
+                  chains = chains, verbose = FALSE),
+      error = function(e) {
+        cat("  ! MCMC error (WITHOUT):", conditionMessage(e), "\n"); NULL
+      }
+    )
+    cat(sprintf("  - Done in %.0fs\n", (proc.time() - t0_wo)["elapsed"]))
+    if (!is.null(draws_without)) {
+      rhat_wo <- coda::gelman.diag(draws_without, multivariate = FALSE)$psrf
+      ess_wo  <- coda::effectiveSize(draws_without)
+      cat(sprintf("  - log_rate : Rhat=%.3f  ESS=%.0f\n",
+                  rhat_wo["log_rate",1], ess_wo["log_rate"]))
+      cat(sprintf("  - log_size : Rhat=%.3f  ESS=%.0f\n",
+                  rhat_wo["log_size",1], ess_wo["log_size"]))
+    }
+  } else {
+    cat("  - run_mcmc=FALSE: skipping (model ready, call mcmc() manually)\n")
+  }
   # ── 4. Comparison metrics ─────────────────────────────────────────────
   cat("\n[4/5] Preparing comparison framework...\n")
 
@@ -934,18 +958,20 @@ simulate_and_estimate <- function(n_sites = 10,
     mechanistic_prediction = I_star_mech,
     model_with_mech        = model_with_mech,
     model_without_mech     = model_without_mech,
+    draws_with             = draws_with,
+    draws_without          = draws_without,
     spatial_coords         = spatial_coords,
     times                  = times,
-    true_params            = true_params,
-    greta_available        = greta_ok
+    true_params            = true_params
   )
 
   cat("  - Stage 1 metrics prepared\n")
-  if (greta_ok) cat("  - greta models ready for MCMC\n")
+  cat("  - greta models ready for MCMC\n")
 
   # ── 5. Visualisation ─────────────────────────────────────────────────
-  cat("\n[5/5] Creating visualisation...\n")
+  cat("\n[5/5] Creating visualisations...\n")
 
+  # ── Plot 1: Stage 1 — Mechanistic prediction vs observed (Site 1) ────────────
   site_idx  <- 1
   plot_data <- data.frame(
     month            = seq_along(times),
@@ -954,42 +980,194 @@ simulate_and_estimate <- function(n_sites = 10,
     mechanistic_pred = I_star_mech[, site_idx]
   )
 
-  p <- ggplot(plot_data, aes(x = month)) +
-    geom_line(aes(y = true_incidence,   colour = "True Incidence"),         linewidth = 1) +
-    geom_point(aes(y = observed_cases,  colour = "Observed Cases"),         alpha = 0.6, size = 2) +
+  p1 <- ggplot(plot_data, aes(x = month)) +
+    geom_line(aes(y = true_incidence,   colour = "True Incidence"),        linewidth = 1) +
+    geom_point(aes(y = observed_cases,  colour = "Observed Cases"),        alpha = 0.6, size = 2) +
     geom_line(aes(y = mechanistic_pred, colour = "Mechanistic Prediction I*"),
               linetype = "dashed", linewidth = 1) +
     scale_colour_manual(values = c(
-      "True Incidence"             = "#2E75B6",
-      "Observed Cases"             = "black",
-      "Mechanistic Prediction I*"  = "#C00000"
+      "True Incidence"            = "#2E75B6",
+      "Observed Cases"            = "black",
+      "Mechanistic Prediction I*" = "#C00000"
     )) +
     labs(
-      title    = sprintf("Simulation Study — Site %d", site_idx),
-      subtitle = "Mechanistic prediction vs observed data",
-      x = "Month", y = "Monthly Incidence", colour = ""
+      title    = sprintf("Stage 1 — Mechanistic Prediction vs Observed Data (Site %d)", site_idx),
+      subtitle = "ODE-derived I* tracks true incidence; observed cases show reporting noise",
+      x = "Month", y = "Monthly Incidence / Cases", colour = ""
     ) +
     theme_minimal(base_size = 12) +
-    theme(legend.position = "bottom",
-          panel.grid.minor = element_blank(),
+    theme(legend.position = "bottom", panel.grid.minor = element_blank(),
           plot.title = element_text(face = "bold"))
+  print(p1)
+  cat("  - Plot 1: Stage 1 mechanistic prediction\n")
 
-  print(p)
+  # ── Plots 2–3: Stage 2 posterior — only if MCMC succeeded ────────────────────
+  if (!is.null(draws_with) && !is.null(draws_without)) {
 
+    draws_with_df    <- as.data.frame(as.matrix(draws_with))
+    draws_without_df <- as.data.frame(as.matrix(draws_without))
+    draws_with_df$model    <- "WITH mechanistic offset"
+    draws_without_df$model <- "WITHOUT mechanistic offset"
+    draws_combined <- rbind(draws_with_df, draws_without_df)
+
+    # ── Plot 2: Posterior density — log_rate comparison ─────────────────────────
+    p2 <- ggplot(draws_combined, aes(x = log_rate, fill = model, colour = model)) +
+      geom_density(alpha = 0.35, linewidth = 0.8) +
+      geom_vline(xintercept = log(0.1), linetype = "dashed",
+                 colour = "grey30", linewidth = 0.8) +
+      annotate("text", x = log(0.1) + 0.05, y = Inf,
+               label = "True log(0.1)", vjust = 1.5, hjust = 0,
+               size = 3.5, colour = "grey30") +
+      scale_fill_manual(values  = c("WITH mechanistic offset" = "#2E75B6",
+                                    "WITHOUT mechanistic offset" = "#C00000")) +
+      scale_colour_manual(values = c("WITH mechanistic offset" = "#2E75B6",
+                                     "WITHOUT mechanistic offset" = "#C00000")) +
+      labs(
+        title    = "Stage 2 — Posterior: log_rate (reporting rate on log scale)",
+        subtitle = "WITH offset should be tighter and closer to truth",
+        x = "log_rate", y = "Posterior Density", fill = "", colour = ""
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+            plot.title = element_text(face = "bold"))
+    print(p2)
+    cat("  - Plot 2: Posterior density — log_rate\n")
+
+    # ── Plot 3: Posterior density — log_size (overdispersion) comparison ────────
+    p3 <- ggplot(draws_combined, aes(x = log_size, fill = model, colour = model)) +
+      geom_density(alpha = 0.35, linewidth = 0.8) +
+      scale_fill_manual(values  = c("WITH mechanistic offset" = "#2E75B6",
+                                    "WITHOUT mechanistic offset" = "#C00000")) +
+      scale_colour_manual(values = c("WITH mechanistic offset" = "#2E75B6",
+                                     "WITHOUT mechanistic offset" = "#C00000")) +
+      labs(
+        title    = "Stage 2 — Posterior: log_size (NB overdispersion)",
+        subtitle = "WITH offset: larger size (near-Poisson) = mechanistic model explains variation",
+        x = "log_size  [size = exp(log_size)]", y = "Posterior Density", fill = "", colour = ""
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+            plot.title = element_text(face = "bold"))
+    print(p3)
+    cat("  - Plot 3: Posterior density — log_size (overdispersion)\n")
+
+    # ── Plot 4: MCMC trace plots ─────────────────────────────────────────────────
+    n_iter <- nrow(draws_with_df) / 2
+    trace_df_with <- data.frame(
+      iteration = rep(seq_len(n_iter), times = 2),
+      chain     = rep(c("Chain 1", "Chain 2"), each = n_iter),
+      log_rate  = as.matrix(draws_with)[, "log_rate"],
+      log_size  = as.matrix(draws_with)[, "log_size"],
+      model     = "WITH mechanistic offset"
+    )
+    trace_df_without <- data.frame(
+      iteration = rep(seq_len(n_iter), times = 2),
+      chain     = rep(c("Chain 1", "Chain 2"), each = n_iter),
+      log_rate  = as.matrix(draws_without)[, "log_rate"],
+      log_size  = as.matrix(draws_without)[, "log_size"],
+      model     = "WITHOUT mechanistic offset"
+    )
+    trace_df <- rbind(trace_df_with, trace_df_without)
+
+    p4a <- ggplot(trace_df, aes(x = iteration, y = log_rate,
+                                colour = chain, alpha = chain)) +
+      geom_line(linewidth = 0.4) +
+      scale_alpha_manual(values = c("Chain 1" = 0.9, "Chain 2" = 0.6)) +
+      scale_colour_manual(values = c("Chain 1" = "#2E75B6", "Chain 2" = "#C00000")) +
+      facet_wrap(~ model, ncol = 1) +
+      labs(title = "MCMC Trace — log_rate", x = "Iteration", y = "log_rate",
+           colour = "", alpha = "") +
+      theme_minimal(base_size = 11) +
+      theme(legend.position = "bottom", strip.text = element_text(face = "bold"),
+            panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"))
+    print(p4a)
+
+    p4b <- ggplot(trace_df, aes(x = iteration, y = log_size,
+                                colour = chain, alpha = chain)) +
+      geom_line(linewidth = 0.4) +
+      scale_alpha_manual(values = c("Chain 1" = 0.9, "Chain 2" = 0.6)) +
+      scale_colour_manual(values = c("Chain 1" = "#2E75B6", "Chain 2" = "#C00000")) +
+      facet_wrap(~ model, ncol = 1) +
+      labs(title = "MCMC Trace — log_size", x = "Iteration", y = "log_size",
+           colour = "", alpha = "") +
+      theme_minimal(base_size = 11) +
+      theme(legend.position = "bottom", strip.text = element_text(face = "bold"),
+            panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"))
+    print(p4b)
+    cat("  - Plot 4: MCMC trace plots\n")
+
+    # ── Plot 5: Posterior predictive — WITH vs WITHOUT vs observed ────────────
+    reporting_rate_with    <- exp(median(draws_with_df$log_rate))
+    reporting_rate_without <- exp(median(draws_without_df$log_rate))
+
+    pp_df <- data.frame(
+      month          = seq_along(times),
+      observed       = observed_cases[, site_idx],
+      pred_with      = reporting_rate_with    * I_star_mech[, site_idx],
+      pred_without   = reporting_rate_without * mean(I_star_mech) * exp(0)
+    )
+
+    p5 <- ggplot(pp_df, aes(x = month)) +
+      geom_point(aes(y = observed,     colour = "Observed Cases"),
+                 size = 2, alpha = 0.7) +
+      geom_line(aes(y = pred_with,     colour = "WITH offset (posterior median)"),
+                linewidth = 1) +
+      geom_line(aes(y = pred_without,  colour = "WITHOUT offset (posterior median)"),
+                linewidth = 1, linetype = "dashed") +
+      scale_colour_manual(values = c(
+        "Observed Cases"                    = "black",
+        "WITH offset (posterior median)"    = "#2E75B6",
+        "WITHOUT offset (posterior median)" = "#C00000"
+      )) +
+      labs(
+        title    = sprintf("Stage 2 — Posterior Predictive Check (Site %d)", site_idx),
+        subtitle = "WITH offset captures seasonal pattern; WITHOUT is flat",
+        x = "Month", y = "Predicted Cases", colour = ""
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+            plot.title = element_text(face = "bold"))
+    print(p5)
+    cat("  - Plot 5: Posterior predictive check\n")
+
+    # ── Print posterior summary table ────────────────────────────────────────────
+    cat("\n  --- Posterior Summary (WITH offset) ---\n")
+    rhat_w <- coda::gelman.diag(draws_with,    multivariate = FALSE)$psrf
+    rhat_o <- coda::gelman.diag(draws_without, multivariate = FALSE)$psrf
+    ess_w  <- coda::effectiveSize(draws_with)
+    ess_o  <- coda::effectiveSize(draws_without)
+    cat(sprintf("  %-12s  mean=%7.3f  sd=%6.3f  Rhat=%.3f  ESS=%4.0f\n",
+                "log_rate",
+                mean(draws_with_df$log_rate),
+                sd(draws_with_df$log_rate),
+                rhat_w["log_rate", 1], ess_w["log_rate"]))
+    cat(sprintf("  %-12s  mean=%7.3f  sd=%6.3f  Rhat=%.3f  ESS=%4.0f\n",
+                "log_size",
+                mean(draws_with_df$log_size),
+                sd(draws_with_df$log_size),
+                rhat_w["log_size", 1], ess_w["log_size"]))
+    cat("\n  --- Posterior Summary (WITHOUT offset) ---\n")
+    cat(sprintf("  %-12s  mean=%7.3f  sd=%6.3f  Rhat=%.3f  ESS=%4.0f\n",
+                "log_rate",
+                mean(draws_without_df$log_rate),
+                sd(draws_without_df$log_rate),
+                rhat_o["log_rate", 1], ess_o["log_rate"]))
+    cat(sprintf("  %-12s  mean=%7.3f  sd=%6.3f  Rhat=%.3f  ESS=%4.0f\n",
+                "log_size",
+                mean(draws_without_df$log_size),
+                sd(draws_without_df$log_size),
+                rhat_o["log_size", 1], ess_o["log_size"]))
+
+  } else {
+    cat("  ! Skipping Stage 2 plots — MCMC draws not available\n")
+  }
   cat("\n=================================================================\n")
   cat("  SIMULATION-ESTIMATION STUDY COMPLETE\n")
   cat("=================================================================\n\n")
+  cat("NEXT STEPS \u2014 full MCMC run:\n")
+  cat("  draws_with    <- mcmc(model_with_mech,    n_samples=1000, warmup=500)\n")
+  cat("  draws_without <- mcmc(model_without_mech, n_samples=1000, warmup=500)\n\n")
 
-  if (!greta_ok) {
-    cat("NOTE: Stage 2 (greta/TF) was SKIPPED.\n")
-    cat("      To enable: open a system terminal and run:\n")
-    cat("      pip install setuptools tensorflow tensorflow-probability\n")
-    cat("      Then restart R and rerun.\n\n")
-  } else {
-    cat("NEXT STEPS — full MCMC run:\n")
-    cat("  draws_with    <- mcmc(model_with_mech,    n_samples=1000, warmup=500)\n")
-    cat("  draws_without <- mcmc(model_without_mech, n_samples=1000, warmup=500)\n\n")
-  }
 
   return(comparison_metrics)
 }
@@ -1172,27 +1350,17 @@ main_example <- function() {
   return(invisible(results))
 }
 
-
 # ==============================================================================
 # INTERACTIVE EXECUTION
 # ==============================================================================
 
 # Automatically run demonstration if script is sourced interactively.
-# Wrapped in tryCatch so that sourcing the file (e.g. for function loading
-# in unit tests) does not crash when greta/TensorFlow is unavailable.
 if (interactive()) {
-  tryCatch({
-    message("\nRunning EpiWave FOI Model demonstration...\n")
-    message("(Requires working greta/TensorFlow environment)\n")
-    results <- main_example()
-    message("\nDemonstration complete. Results stored in 'results' object.\n")
-  }, error = function(e) {
-    message(sprintf(
-      paste0("\n[EpiWave] Skipping interactive demo — greta/TensorFlow not ready.\n",
-             "  Reason : %s\n",
-             "  Fix    : Restart R, then run reticulate::py_config() to check Python.\n",
-             "  Stage 1 functions (ODE, parameter generation) are fully available.\n"),
-      e$message
-    ))
-  })
+  message("\n================================================================")
+  message("  EpiWave FOI Model — loaded successfully.")
+  message("  Stage 1 only (instant):  simulate_and_estimate(run_mcmc=FALSE)")
+  message("  Full pipeline (MCMC):    simulate_and_estimate()")
+  message("  Non-blocking MCMC:       source(\"mcmc_background_job.R\")")
+  message("  Plot cached results:     plot_stage2_results(readRDS(\"cache/mcmc_results.rds\"))")
+  message("================================================================\n")
 }
