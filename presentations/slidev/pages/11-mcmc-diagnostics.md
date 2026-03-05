@@ -5,12 +5,12 @@ layout: default
 # MCMC Convergence Diagnostics
 
 <div class="flex justify-center">
-<img src="/images/mcmc_trace_plots.png" class="h-56 rounded shadow-lg" />
+<img src="/images/mcmc_trace_plots.png" class="h-40 rounded shadow-lg" />
 </div>
 
-<div class="grid grid-cols-2 gap-3 mt-2">
+<div class="grid grid-cols-2 gap-2 mt-1">
 
-<div class="p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm">
+<div class="p-2 rounded-lg bg-blue-50 border border-blue-200 text-xs">
 
 **WITH Mechanistic Offset**
 
@@ -20,12 +20,12 @@ layout: default
 | log_size | 1.004 | 489 | Converged |
 
 <div class="mt-1 text-xs opacity-80">
-log_size posterior: mean=5.49, sd=0.49 (size $\approx$ 240). Reparameterised from Beta(phi) to Normal(log_size) — ESS improved from 82 to <b>489</b>. Near-Poisson behaviour confirms mechanistic offset captures variation.
+log_size: mean=5.49, sd=0.49 (size≈240). Reparam from Beta(phi) → Normal(log_size) — ESS 82→<b>489</b>.
 </div>
 
 </div>
 
-<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm">
+<div class="p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs">
 
 **WITHOUT Mechanistic Offset**
 
@@ -35,16 +35,16 @@ log_size posterior: mean=5.49, sd=0.49 (size $\approx$ 240). Reparameterised fro
 | phi ($\phi$) | 1.000 | 2,769 | Converged |
 
 <div class="mt-1 text-xs opacity-80">
-phi = 0.357 (size $\approx$ 1.8) — heavy overdispersion because no mechanistic structure absorbs variation.
+phi=0.357 (size≈1.8) — heavy overdispersion, no mechanistic structure absorbs variation.
 </div>
 
 </div>
 
 </div>
 
-<div class="mt-2 p-2 bg-gray-100 text-xs rounded text-sm text-center">
+<div class="mt-1 p-1 bg-gray-100 text-xs rounded text-center">
 
-**The Overdispersion Story:** WITH offset size $\approx$ 240 (near-Poisson) vs WITHOUT $\phi = 0.357$ (size $\approx$ 1.8, heavy overdispersion) — mechanistic model explains virtually all variation
+**Overdispersion Story:** WITH size≈240 (near-Poisson) vs WITHOUT size≈1.8 (heavy overdispersion) — mechanistic model explains virtually all variation
 
 </div>
 

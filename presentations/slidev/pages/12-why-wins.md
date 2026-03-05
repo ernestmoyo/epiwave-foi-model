@@ -4,12 +4,11 @@ layout: default
 
 # Why This Framework Wins
 
-<div class="grid grid-cols-2 gap-4 mt-4">
+<div class="grid grid-cols-2 gap-2 mt-2">
 
-<div class="p-3 rounded-lg text-sm bg-blue-50 border border-blue-200">
+<div class="p-2 rounded-lg text-xs bg-blue-50 border border-blue-200">
 
 ### Computational Efficiency
-
 - No MCMC over ODE parameters
 - One-time forward ODE solve per site
 - Only **2 parameters** for HMC
@@ -17,10 +16,9 @@ layout: default
 
 </div>
 
-<div class="p-3 rounded-lg text-sm bg-green-50 border border-green-200">
+<div class="p-2 rounded-lg text-xs bg-green-50 border border-green-200">
 
 ### Biological Realism
-
 - Fixed Vector Atlas parameters
 - Ross-Macdonald dynamics
 - ITN/IRS intervention effects
@@ -28,10 +26,9 @@ layout: default
 
 </div>
 
-<div class="p-3 rounded-lg text-sm bg-purple-50 border border-purple-200">
+<div class="p-2 rounded-lg text-xs bg-purple-50 border border-purple-200">
 
 ### Statistical Flexibility
-
 - Mechanistic structural prior
 - NegBin residual overdispersion
 - Data overrides where needed
@@ -39,10 +36,9 @@ layout: default
 
 </div>
 
-<div class="p-3 rounded-lg text-sm bg-amber-50 border border-amber-200">
+<div class="p-2 rounded-lg text-xs bg-amber-50 border border-amber-200">
 
 ### Operational Feasibility
-
 - Scales to national mapping
 - Modular independent updates
 - Interpretable bio parameters
@@ -52,7 +48,7 @@ layout: default
 
 </div>
 
-```mermaid {scale: 0.55}
+```mermaid {scale: 0.4}
 graph LR
     VA["Vector Atlas<br/>m, a, g"] --> S1["Stage 1<br/>Ross-Macdonald ODE"]
     TEMP["Temperature<br/>Models"] --> S1

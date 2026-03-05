@@ -31,13 +31,11 @@ SCHOOL OF COMPUTATIONAL AND COMMUNICATION SCIENCE AND ENGINEERING
 <hr class="nmaist-rule" />
 
 <div class="text-center mt-2" style="color: var(--nmaist-red); font-weight: 700; font-size: 0.9rem; letter-spacing: 0.05em;">
-FRAMEWORK DEVELOPMENT UPDATE
+FRAMEWORK DEVELOPMENT UPDATE (Objective 2)
 </div>
 
-<div class="text-center mt-3" style="color: var(--nmaist-brown);">
-
-### Developing and Validating a Two-Stage Vector-Informed Malaria Transmission Modelling Framework
-
+<div class="text-center mt-3 px-8" style="color: var(--nmaist-brown); font-size: 0.85rem; font-weight: 600; line-height: 1.4;">
+Developing and Validating a Modeling Framework for Integrating Vector Spatial Data into Malaria Risk Mapping Approaches — a case for Africa (Moz &amp; or Ang)
 </div>
 
 <div class="text-center mt-4 text-sm">
