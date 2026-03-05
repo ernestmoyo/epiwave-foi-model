@@ -1,101 +1,106 @@
 # EpiWave FOI Model
 
+**A Two-Stage Vector-Informed Malaria Transmission Mapping Framework**
+
 ## Overview
 
-The **EpiWave FOI Model** provides a structured approach for estimating the **Force of Infection (FOI)** using mechanistic transmission models integrated with Bayesian inference and spatial modeling techniques. This approach facilitates enhanced malaria transmission predictions and informs targeted malaria control strategies.
+The **EpiWave FOI Model** is a computational framework for generating malaria risk maps that integrate entomological data (vector abundance, biting rates, mortality) with epidemiological surveillance data. Developed as part of Ernest Moyo's PhD research at NM-AIST in collaboration with Vector Atlas, this framework addresses a critical gap in operational malaria risk mapping: **how to efficiently incorporate vector dynamics into disease models without computational infeasibility**.
 
-This document presents the mathematical foundations and workflow clearly without embedding R code, highlighting the model’s theoretical underpinnings in partial fulfillment of Ernest Moyo’s PhD research at NM-AIST and Vector Atlas, focusing on integrating vector data into malaria risk mapping in Tanzania.
+### Key Innovation
 
-## Mathematical Formulations
+Traditional mechanistic models face a computational bottleneck when jointly inferring transmission and vector parameters. This project implements a **two-stage framework** that:
 
-### Ross-Macdonald Transmission Dynamics
+1. Uses Vector Atlas data to specify entomological parameters as **fixed inputs**
+2. Solves transmission dynamics **once per location** (not at every MCMC iteration)
+3. Uses mechanistic predictions as **offsets** in a Negative Binomial likelihood model
+4. Achieves **17x speedup** while maintaining biological interpretability
 
-The Ross-Macdonald model describes malaria transmission between humans and mosquitoes through the following system of ordinary differential equations (ODEs):
+## Mathematical Framework
 
-$$
-\frac{dx}{dt} = m \cdot a \cdot b \cdot z \cdot (1 - x) - r \cdot x
-$$
+### Stage 1: Ross-Macdonald ODE
 
-$$
-\frac{dz}{dt} = a \cdot c \cdot x \cdot (1 - z) - g \cdot z
-$$
+$$\frac{dx}{dt} = m \cdot a \cdot b \cdot z \cdot (1 - x) - r \cdot x$$
 
-Where:
+$$\frac{dz}{dt} = a \cdot c \cdot x \cdot (1 - z) - g \cdot z$$
 
--   $x$ = Proportion of infected humans
--   $z$ = Proportion of infected mosquitoes
--   $m$ = Mosquito abundance relative to humans
--   $a$ = Human biting rate by mosquitoes
--   $b$ = Probability of transmission from mosquito to human per bite
--   $c$ = Probability of transmission from human to mosquito per bite
--   $r$ = Human recovery rate (inverse of infection duration)
--   $g$ = Mosquito death rate (inverse of mosquito lifespan)
+Where $x$ = human infection prevalence, $z$ = mosquito infection prevalence, and parameters $m(t)$, $a(t)$, $g(t)$ are time-varying (from Vector Atlas or temperature models). ITN/IRS intervention effects are applied upstream.
 
-### Bayesian Integration of Spatial Covariates
+**Mechanistic prediction:**
 
-The mosquito abundance parameter $m$ is modeled spatially through Bayesian inference, integrating covariates ($X$):
+$$I^*_{s,t} = m_{s,t} \cdot a_{s,t} \cdot b \cdot z_{s,t} \cdot \text{pop}_{s,t}$$
 
-$$
-\log(m) = \alpha + \beta \cdot X
-$$
+### Stage 2: Negative Binomial Calibration
 
--   $\alpha$ = Intercept parameter (prior: normal distribution)
--   $\beta$ = Covariate effect (positive constraint)
+$$\log(\mu_{s,t}) = \lambda + \log(I^*_{s,t})$$
 
-### Force of Infection (FOI) Estimation
+$$C_{s,t} \sim \text{NegBin}(\text{size},\; p_{s,t}), \quad p_{s,t} = \frac{\text{size}}{\text{size} + \mu_{s,t}}$$
 
-The FOI, representing the rate at which susceptible individuals become infected, is estimated as:
+Only **2 free parameters** for MCMC inference:
+- $\lambda \sim \mathcal{N}(-2, 1)$ — log reporting rate
+- $\log(\text{size}) \sim \mathcal{N}(3, 1)$ — overdispersion
 
-$$
-\xi = m \cdot a \cdot b \cdot z
-$$
+## Code Architecture
 
-A Gaussian Process (GP) is used to model the residual spatial-temporal variability:
+11 functions in ~580 lines (`R/epiwave-foi-model.R`):
 
-$$
-\log(\xi) = \log(m \cdot a \cdot b \cdot z) + \epsilon
-$$
+| Stage | Functions | Purpose |
+|-------|-----------|---------|
+| **Stage 1** | `get_fixed_m()`, `get_fixed_a()`, `get_fixed_g()` | Entomological parameters |
+| | `apply_interventions()` | ITN/IRS effects on m, a, g |
+| | `ross_macdonald_ode()` | ODE system definition |
+| | `solve_ross_macdonald_multi_site()` | Multi-site ODE solver (deSolve) |
+| | `compute_mechanistic_prediction()` | FOI × population → I* |
+| **Stage 2** | `fit_epiwave_with_offset()` | NegBin model via greta/TensorFlow |
+| **Validation** | `simulate_and_estimate()` | Full pipeline with diagnostic plots |
+| | `extract_posterior_summary()` | Posterior processing |
+| | `compute_performance_metrics()` | RMSE, coverage, comparison |
 
-Where $\epsilon \sim GP(0, K)$, with $K$ being a radial basis function (RBF) kernel.
+## Quick Start
 
-### Bayesian Hierarchical Model for Observed Cases
+```r
+# Install dependencies
+install.packages(c("deSolve", "greta", "tidyverse", "ggplot2"))
+greta::install_tensorflow()
 
-Observed malaria cases ($C_{lt}$) in each location are modeled with a Poisson distribution:
+# Source and run simulation study
+source("R/epiwave-foi-model.R")
+results <- simulate_and_estimate(n_sites = 10, n_times = 48, run_mcmc = TRUE)
+```
 
-$$
-C_{lt} \sim \text{Poisson}(\gamma \cdot I_{lt})
-$$
+## Validation Results
 
-Where:
+From the simulation-estimation study (10 sites, 48 months):
 
--   $\gamma$ = Symptomatic rate
--   $I_{lt}$ = Total infected individuals estimated through FOI $\xi$
+| Metric | WITH Offset | WITHOUT Offset |
+|--------|-------------|----------------|
+| RMSE | 0.070 | 0.586 |
+| **RMSE Improvement** | **88%** | — |
+| Reporting rate recovered | 0.1003 (true: 0.10) | — |
+| 95% CI width | 0.0013 | 0.0133 |
 
-## Workflow Summary
+## Project Structure
 
-The modeling workflow includes:
+```
+epiwave-foi-model/
+├── R/
+│   └── epiwave-foi-model.R       # Main implementation
+├── papers/
+│   └── paper2_epiWaveFOI/        # Objective 2 paper (Rmd + HTML)
+├── presentations/
+│   └── slidev/                   # Slidev presentation deck
+├── PROJECT_DOCUMENTATION.md      # Full technical documentation
+├── data/                         # Git-ignored data directory
+└── README.md
+```
 
-1.  **Data Preparation**: Collect and integrate spatial data on vectors, environmental covariates, and malaria incidence.
-2.  **Parameter Estimation**: Utilize Bayesian inference to estimate model parameters.
-3.  **Dynamic Modeling**: Simulate the Ross-Macdonald ODE system iteratively.
-4.  **FOI Calculation**: Estimate the spatial-temporal distribution of FOI incorporating Gaussian Processes.
-5.  **Case Simulation and Validation**: Generate predictive distributions for malaria cases and validate using field data.
+## Documentation
 
-## Future Enhancements
+- **[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)** — Full technical docs (math, API, data requirements, troubleshooting)
+- **[Paper](papers/paper2_epiWaveFOI/objective2_EpiwaveFOI_Model_Paper.Rmd)** — Objective 2 framework paper
 
--   Integration of comprehensive real-world data from: **Vector Atlas, MosquitoDB & NMCP** .
--   Development of advanced spatial-temporal Bayesian hierarchical models.
--   Rigorous validation using Tanzanian epidemiological and entomological datasets.
--   Creation of interactive decision-support dashboards for policy makers.
--   Expansion and standardization of the modeling approach for broader Pan-African implementation.
+## Author
 
-## Author and Contact
+**Ernest Moyo** — PhD Candidate, NM-AIST / Vector Atlas
 
-**Ernest Moyo**
-
--   **Date:** 2026-01-24
--   Connect with me on [LinkedIn][linkedin-profile]
-
-[linkedin-profile]: https://www.linkedin.com/in/ernest-moyo-96aa3813/
-
-
+- ernest.moyo@nm-aist.ac.tz
+- [LinkedIn](https://www.linkedin.com/in/ernest-moyo-96aa3813/)
