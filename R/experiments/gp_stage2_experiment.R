@@ -481,12 +481,3 @@ cat("  v3        | Random Effects     | Runs but alpha/gamma ridge\n")
 cat("  v4        | NegBin + log_rate  | WORKS — clean convergence\n")
 cat("  ----------|--------------------|---------------------------------\n\n")
 
-cat("  KEY LESSONS:\n")
-cat("  1. GP over n_obs points = O(n^3) Cholesky — doesn't scale\n")
-cat("  2. alpha + log(gamma) are non-identifiable — merge them\n")
-cat("  3. NegBin handles overdispersion without GP complexity\n")
-cat("  4. log_size reparameterisation avoids boundary issues\n\n")
-
-cat("  Nick's VISION was right: use I* as offset, model residuals.\n")
-cat("  The GP was the right idea conceptually but wrong computationally.\n")
-cat("  NegBin achieves the same goal with 2 params instead of 5+.\n\n")
