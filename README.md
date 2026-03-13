@@ -14,8 +14,9 @@ Traditional mechanistic models face a computational bottleneck when jointly infe
 
 1. Uses Vector Atlas data to specify entomological parameters as **fixed inputs**
 2. Solves transmission dynamics **once per location** (not at every MCMC iteration)
-3. Uses mechanistic predictions as **offsets** in a Negative Binomial likelihood model
-4. Achieves **17x speedup** while maintaining biological interpretability
+3. Uses mechanistic predictions as **log-offsets** in a Gaussian Process model
+4. Models spatially-correlated residuals between mechanistic prediction and observed data
+5. Simultaneously fits to **case counts** (Poisson) and **prevalence surveys** (Binomial)
 
 ## Mathematical Framework
 
@@ -31,19 +32,32 @@ Where $x$ = human infection prevalence, $z$ = mosquito infection prevalence, and
 
 $$I^*_{s,t} = m_{s,t} \cdot a_{s,t} \cdot b \cdot z_{s,t} \cdot \text{pop}_{s,t}$$
 
-### Stage 2: Negative Binomial Calibration
+### Stage 2: GP + Dual Likelihood
 
-$$\log(\mu_{s,t}) = \lambda + \log(I^*_{s,t})$$
+**Latent infection incidence:**
 
-$$C_{s,t} \sim \text{NegBin}(\text{size},\; p_{s,t}), \quad p_{s,t} = \frac{\text{size}}{\text{size} + \mu_{s,t}}$$
+$$I_{s,t} = \exp\left(\alpha + \log(I^*_{s,t}) + \varepsilon_{s,t}\right)$$
 
-Only **2 free parameters** for MCMC inference:
-- $\lambda \sim \mathcal{N}(-2, 1)$ — log reporting rate
-- $\log(\text{size}) \sim \mathcal{N}(3, 1)$ — overdispersion
+$$\varepsilon \sim \text{GP}(0, K), \quad K = \sigma^2 \cdot K_{\text{space}}(\phi) \cdot K_{\text{time}}(\theta)$$
+
+**Dual likelihood:**
+
+$$C_{s,t} \sim \text{Poisson}(\gamma \cdot I_{s,t}) \quad \text{(case counts)}$$
+
+$$Y_{s,t} \sim \text{Binomial}(N_{s,t},\; x_{s,t}) \quad \text{(prevalence surveys)}$$
+
+**5 free parameters** for MCMC inference:
+- $\alpha$ — intercept (log-scale adjustment to mechanistic prediction)
+- $\gamma$ — reporting/case ascertainment rate
+- $\sigma^2$ — GP marginal variance
+- $\phi$ — spatial lengthscale (Matern 5/2)
+- $\theta$ — temporal lengthscale (Exponential)
+
+The GP captures spatially-correlated departures from the mechanistic model, while the dual likelihood ensures $\alpha$ and $\gamma$ are individually identifiable.
 
 ## Code Architecture
 
-11 functions in ~580 lines (`R/epiwave-foi-model.R`):
+15 functions in `R/epiwave-foi-model.R`:
 
 | Stage | Functions | Purpose |
 |-------|-----------|---------|
@@ -51,8 +65,11 @@ Only **2 free parameters** for MCMC inference:
 | | `apply_interventions()` | ITN/IRS effects on m, a, g |
 | | `ross_macdonald_ode()` | ODE system definition |
 | | `solve_ross_macdonald_multi_site()` | Multi-site ODE solver (deSolve) |
-| | `compute_mechanistic_prediction()` | FOI × population → I* |
-| **Stage 2** | `fit_epiwave_with_offset()` | NegBin model via greta/TensorFlow |
+| | `compute_mechanistic_prediction()` | FOI x population -> I* |
+| **Stage 2** | `build_gp_kernel()` | Separable Matern 5/2 x Exponential kernel |
+| | `simulate_gp_residuals()` | True GP residuals for simulation studies |
+| | `simulate_prevalence_surveys()` | Binomial survey data from ODE prevalence |
+| | `fit_epiwave_gp()` | GP + dual likelihood via greta/greta.gp |
 | **Validation** | `simulate_and_estimate()` | Full pipeline with diagnostic plots |
 | | `extract_posterior_summary()` | Posterior processing |
 | | `compute_performance_metrics()` | RMSE, coverage, comparison |
@@ -61,24 +78,14 @@ Only **2 free parameters** for MCMC inference:
 
 ```r
 # Install dependencies
-install.packages(c("deSolve", "greta", "tidyverse", "ggplot2"))
+install.packages(c("deSolve", "greta", "greta.gp", "MASS", "tidyverse", "ggplot2"))
 greta::install_tensorflow()
 
-# Source and run simulation study
+# Source and run simulation study (start small)
+source("R/greta_setup.R")
 source("R/epiwave-foi-model.R")
-results <- simulate_and_estimate(n_sites = 10, n_times = 48, run_mcmc = TRUE)
+results <- simulate_and_estimate(n_sites = 3, n_times = 12, n_samples = 500)
 ```
-
-## Validation Results
-
-From the simulation-estimation study (10 sites, 48 months):
-
-| Metric | WITH Offset | WITHOUT Offset |
-|--------|-------------|----------------|
-| RMSE | 0.070 | 0.586 |
-| **RMSE Improvement** | **88%** | — |
-| Reporting rate recovered | 0.1003 (true: 0.10) | — |
-| 95% CI width | 0.0013 | 0.0133 |
 
 ## Project Structure
 
@@ -90,6 +97,9 @@ epiwave-foi-model/
 │   └── paper2_epiWaveFOI/        # Objective 2 paper (Rmd + HTML)
 ├── presentations/
 │   └── slidev/                   # Slidev presentation deck
+├── correspondence/
+│   └── issues/                   # Supervisor feedback threads
+├── CLAUDE.md                     # Development constraints
 ├── PROJECT_DOCUMENTATION.md      # Full technical documentation
 ├── data/                         # Git-ignored data directory
 └── README.md
@@ -97,7 +107,8 @@ epiwave-foi-model/
 
 ## Documentation
 
-- **[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)** — Full technical docs (math, API, data requirements, troubleshooting)
+- **[CLAUDE.md](CLAUDE.md)** — Model constraints and supervisor design decisions
+- **[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)** — Full technical docs (math, API, data requirements)
 - **[Paper](papers/paper2_epiWaveFOI/objective2_EpiwaveFOI_Model_Paper.Rmd)** — Objective 2 framework paper
 
 ## Author
