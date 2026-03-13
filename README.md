@@ -107,7 +107,6 @@ epiwave-foi-model/
 
 ## Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** — Model constraints and supervisor design decisions
 - **[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)** — Full technical docs (math, API, data requirements)
 - **[Paper](papers/paper2_epiWaveFOI/objective2_EpiwaveFOI_Model_Paper.Rmd)** — Objective 2 framework paper
 
