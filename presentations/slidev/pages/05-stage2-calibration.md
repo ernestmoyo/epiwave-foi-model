@@ -2,27 +2,24 @@
 layout: two-cols
 ---
 
-# Stage 2: Bayesian Calibration
+# Stage 2: GP + Dual Likelihood
 
-Negative Binomial likelihood with mechanistic offset — **only 2 free parameters**
+Gaussian Process residuals with mechanistic offset — **5 free parameters**
 
 <div class="mt-2 text-sm">
 
-**Structural Equation:**
+**Latent infection incidence:**
 
-$$\log(\mu_{s,t}) = \lambda + \log(I^*_{s,t})$$
+$$\log(I_{s,t}) = \alpha + \log(I^*_{s,t}) + \varepsilon_{s,t}$$
 
-**Likelihood:**
+**GP prior on residuals:**
 
-$$C_{s,t} \sim \text{NegBin}(\text{size},\; p_{s,t})$$
+$$\varepsilon \sim \text{GP}(0,\; \sigma^2 \cdot K_{\text{space}}(\phi) \cdot K_{\text{time}}(\theta))$$
 
-where $p_{s,t} = \frac{\text{size}}{\text{size} + \mu_{s,t}}$
+**Dual likelihood:**
 
-**Priors:**
-
-$$\lambda \sim \text{Normal}(-2, 1)$$
-$$\log(\text{size}) \sim \text{Normal}(3, 1)$$
-$$\text{size} = \exp(\log\text{\_size})$$
+$$C_{s,t} \sim \text{Poisson}(\gamma \cdot I_{s,t})$$
+$$Y_{s,t} \sim \text{Binomial}(N_{s,t},\; x_{s,t})$$
 
 </div>
 
@@ -30,44 +27,40 @@ $$\text{size} = \exp(\log\text{\_size})$$
 
 <div class="ml-4 mt-2">
 
-**greta implementation** (from `epiwave-foi-model.R`):
+**greta + greta.gp implementation:**
 
 ```r {lines:true}
-fit_epiwave_with_offset <- function(
-    observed_cases, I_star,
-    use_mechanistic = TRUE) {
+fit_epiwave_gp <- function(
+    observed_cases, I_star, x_star,
+    coords, prev_data, ...) {
 
-  library(greta)
-  cases_vec  <- as.vector(observed_cases)
-  I_star_vec <- as.vector(I_star)
+  # 5 free parameters
+  alpha     <- normal(0, 1)
+  gamma     <- normal(0.1, 0.05,
+    truncation = c(0.001, Inf))
+  log_sigma <- normal(-1, 1)
+  log_phi   <- normal(1, 1)
+  log_theta <- normal(1, 1)
 
-  # Priors (only 2 free parameters)
-  log_rate <- normal(-2, 1)
-  log_size <- normal(3, 1)
-  size     <- exp(log_size)
+  # GP residuals
+  K <- build_gp_kernel(
+    exp(log_sigma), exp(log_phi),
+    exp(log_theta))
+  epsilon <- gp(coords, K, ...)
 
-  # Linear predictor with offset
-  log_mu <- log_rate +
-    log(I_star_vec + 1e-10)
-  mu     <- exp(log_mu)
-  prob   <- size / (size + mu)
-
-  # Likelihood
-  distribution(cases_vec) <-
-    negative_binomial(size, prob)
-
-  model(log_rate, log_size)
+  # Dual likelihood
+  I <- exp(alpha + log(I_star) + epsilon)
+  distribution(cases) <- poisson(gamma*I)
+  distribution(prev) <- binomial(N, x_adj)
 }
 ```
 
 </div>
 
 <!--
-Stage 2 is where we calibrate to observed case data. The structural equation uses log(I-star) — our mechanistic prediction from Stage 1 — as a fixed offset. The parameter lambda captures the log reporting rate.
+Stage 2 is where we calibrate to observed data. The structural equation uses log(I-star) — our mechanistic prediction from Stage 1 — as a fixed offset. The Gaussian Process epsilon captures spatially-correlated departures from the mechanistic model.
 
-We use a Negative Binomial likelihood because it naturally handles overdispersion. The log_size parameter controls overdispersion on the log scale — when size is large, we recover the Poisson as a special case.
+The key design choice is the dual likelihood. Poisson for case counts and Binomial for prevalence surveys. This is critical because with case counts alone, alpha and gamma are non-identifiable — they form a ridge in posterior space. But prevalence surveys are unaffected by case ascertainment, so they separately inform infection incidence. This makes both alpha and gamma individually identifiable.
 
-The greta implementation on the right matches the actual code in epiwave-foi-model.R exactly. The entire model specification is just a few lines — two priors, a linear predictor with the mechanistic offset, and the likelihood. That's it — ready for HMC sampling.
-
-The Normal(3,1) prior on log_size gives a median size of ~20, with 95% CI from ~1 to ~400. This replaced an earlier Beta(1,9) prior on phi that caused boundary issues with ESS=82. The reparameterisation improved ESS to 489.
+The GP uses a separable kernel — Matern 5/2 for space times Exponential for time — following epiwave.mapping. With sparse GP inducing points, this scales to large spatial problems. The greta.gp package handles the kernel construction and GP sampling within the HMC framework.
 -->
