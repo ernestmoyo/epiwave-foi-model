@@ -89,7 +89,7 @@ The GP captures spatially-correlated departures from the mechanistic model. The 
 # Install R dependencies
 install.packages(c("deSolve", "greta", "greta.gp", "MASS", "dplyr", "tidyr", "ggplot2"))
 
-# Python/TF setup (see CLAUDE.md for full details)
+# Python/TF setup (see greta_setup.R for details)
 Sys.setenv(RETICULATE_PYTHON = "path/to/r-greta/python.exe")
 
 # Source and run simulation study
@@ -119,7 +119,6 @@ epiwave-foi-model/
 │   └── issues/                   # Supervisor feedback threads
 ├── meetings/
 │   └── PhD_Work/                 # Nick's brainwave, panel notes
-├── CLAUDE.md                     # Development constraints (non-negotiables)
 └── README.md
 ```
 
