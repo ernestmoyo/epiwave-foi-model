@@ -12,7 +12,7 @@
 # Key design choices (per supervisor Prof Nick Golding):
 #   - Do NOT infer dynamic ODE parameters. Use fixed Vector Atlas / temperature
 #     model estimates, solve ODEs ONCE per pixel, then calibrate to case data.
-#   - Use a GP for spatially-correlated residuals (NOT NegBin overdispersion).
+#   - Use a GP for spatially-correlated residuals.
 #   - Dual likelihood (cases + prevalence) makes alpha and gamma identifiable.
 #
 # Reference: https://github.com/idem-lab/epiwave.mapping
@@ -231,19 +231,21 @@ solve_ross_macdonald_multi_site <- function(m_matrix, a_matrix, g_matrix, times,
 }
 
 
-#' Compute mechanistic incidence prediction: I*(t,s) = m*a*b*z * N
-#' @param m_matrix,a_matrix,z_matrix,population_matrix Matrices [n_times x n_sites]
+#' Compute mechanistic infection incidence rate: I*(t,s) = m*a*b*z
+#'
+#' Per Nick Golding's specification: I* is a RATE, not a count.
+#' Population enters the Poisson likelihood separately.
+#'
+#' @param m_matrix,a_matrix,z_matrix Matrices [n_times x n_sites]
 #' @param b Transmission probability mosquito->human
-#' @return Matrix I_star [n_times x n_sites]
+#' @return Matrix I_star [n_times x n_sites] — infection incidence rate
 #' @export
-compute_mechanistic_prediction <- function(m_matrix, a_matrix, b,
-                                           z_matrix, population_matrix) {
+compute_mechanistic_prediction <- function(m_matrix, a_matrix, b, z_matrix) {
   if (!all(dim(m_matrix) == dim(a_matrix),
-           dim(m_matrix) == dim(z_matrix),
-           dim(m_matrix) == dim(population_matrix)))
+           dim(m_matrix) == dim(z_matrix)))
     stop("All input matrices must have identical dimensions")
 
-  m_matrix * a_matrix * b * z_matrix * population_matrix
+  m_matrix * a_matrix * b * z_matrix
 }
 
 
@@ -257,66 +259,76 @@ compute_mechanistic_prediction <- function(m_matrix, a_matrix, b,
 #   Y_{l,t} ~ Binomial(N_{l,t}, x_{l,t})     -- prevalence surveys
 # ==============================================================================
 
-#' Build separable space-time GP kernel using greta.gp.
+#' Build spatial-only GP kernel (Matern 5/2).
 #'
-#' K = sigma^2 * Matern52(phi, columns=1:2) * Exponential(theta, columns=3)
+#' Temporal correlation is handled separately via AR(1), following epiwave.mapping.
 #'
-#' @param sigma2 GP marginal variance (greta scalar)
 #' @param phi Spatial lengthscale (greta scalar)
-#' @param theta Temporal lengthscale (greta scalar)
-#' @return greta.gp kernel object
+#' @param sigma2 GP marginal variance (greta scalar)
+#' @return greta.gp kernel object (spatial only)
 #' @export
-build_gp_kernel <- function(sigma2, phi, theta) {
+build_gp_kernel <- function(phi, sigma2) {
   if (!requireNamespace("greta.gp", quietly = TRUE))
     stop("Package 'greta.gp' required. Install with install.packages('greta.gp')")
-
-  # Spatial kernel: isotropic Matern 5/2 as product of 1D kernels per dimension.
-  # sigma2 on K_lon only; K_lat has unit variance to avoid double-counting.
-  K_lon <- greta.gp::mat52(lengthscales = phi, variance = sigma2, columns = 1L)
-  K_lat <- greta.gp::mat52(lengthscales = phi, variance = 1,      columns = 2L)
-  K_space <- K_lon * K_lat
-
-  # Temporal kernel: Exponential (Matern 1/2) on column 3 (time)
-  K_time <- greta.gp::expo(
-    lengthscales = theta,
-    variance = 1,
-    columns = 3
-  )
-
-  # Separable product kernel
-  K_space * K_time
+  greta.gp::mat52(lengthscales = phi, variance = sigma2)
 }
 
 
-#' Simulate GP residuals from a separable space-time covariance.
+#' AR(1) temporal correlation for GP innovations.
 #'
-#' Uses MASS::mvrnorm() with the true covariance matrix for data generation.
+#' Ported from epiwave.mapping/R/ar1.R (Nick Golding).
+#' Expands the iterative AR(1) equation X_t = rho * X_{t-1} + eps_t
+#' into a matrix multiplication for efficient TensorFlow execution.
 #'
-#' @param coords Matrix [n_obs x 3] of (lon, lat, time_normalised) coordinates
-#' @param sigma2 GP marginal variance (scalar)
+#' @param rho AR(1) correlation coefficient (greta scalar, 0 to 1)
+#' @param innovations Matrix [n_sites x n_times] of spatial GP innovations
+#' @return Matrix [n_sites x n_times] of temporally correlated residuals
+#' @keywords internal
+ar1 <- function(rho, innovations) {
+  n_times <- ncol(innovations)
+  t_seq <- seq_len(n_times)
+  t_mat <- outer(t_seq, t_seq, FUN = "-")
+  t_mat <- pmax(t_mat, 0)
+  mask <- lower.tri(t_mat, diag = TRUE)
+  rho_mat <- (rho ^ t_mat) * mask
+  t(rho_mat %*% t(innovations))
+}
+
+
+#' Simulate GP residuals using spatial Matern 5/2 + AR(1) temporal.
+#'
+#' Matches the epiwave.mapping structure: spatial innovations from mvrnorm,
+#' then AR(1) forward in time.
+#'
+#' @param spatial_coords Matrix [n_sites x 2] of (lon, lat)
+#' @param n_times Number of time steps
+#' @param sigma GP marginal SD (scalar)
 #' @param phi Spatial lengthscale (scalar)
-#' @param theta Temporal lengthscale (scalar)
-#' @return Numeric vector of GP residuals (length n_obs)
+#' @param rho AR(1) temporal correlation (scalar, 0 to 1)
+#' @return Matrix [n_sites x n_times] of GP residuals
 #' @export
-simulate_gp_residuals <- function(coords, sigma2, phi, theta) {
-  n <- nrow(coords)
+simulate_gp_residuals <- function(spatial_coords, n_times, sigma, phi, rho) {
+  n_sites <- nrow(spatial_coords)
+  spatial_dists <- as.matrix(dist(spatial_coords))
 
-  # Spatial distances (Euclidean on lon, lat)
-  spatial_dists <- as.matrix(dist(coords[, 1:2]))
-  # Temporal distances
-  temporal_dists <- as.matrix(dist(coords[, 3]))
-
-  # Matern 5/2 spatial kernel
+  # Matern 5/2 spatial kernel (unit variance — sigma applied after AR(1))
   r_s <- sqrt(5) * spatial_dists / phi
-  K_space <- sigma2 * (1 + r_s + r_s^2 / 3) * exp(-r_s)
+  K_space <- (1 + r_s + r_s^2 / 3) * exp(-r_s) + diag(1e-6, n_sites)
 
-  # Exponential temporal kernel
-  K_time <- exp(-temporal_dists / theta)
+  # Spatial innovations: one draw per time step
+  innovations <- matrix(NA, nrow = n_sites, ncol = n_times)
+  for (t in seq_len(n_times)) {
+    innovations[, t] <- MASS::mvrnorm(1, mu = rep(0, n_sites), Sigma = K_space)
+  }
 
-  # Separable product + jitter for numerical stability
-  K <- K_space * K_time + diag(1e-6, n)
+  # Apply AR(1) and marginal variance
+  epsilon <- matrix(0, nrow = n_sites, ncol = n_times)
+  epsilon[, 1] <- sigma * innovations[, 1]
+  for (t in 2:n_times) {
+    epsilon[, t] <- rho * epsilon[, t - 1] + sigma * innovations[, t]
+  }
 
-  as.vector(MASS::mvrnorm(1, mu = rep(0, n), Sigma = K))
+  epsilon
 }
 
 
@@ -368,36 +380,33 @@ simulate_prevalence_surveys <- function(x_matrix, gp_adjustment = NULL,
 
 #' Fit Stage 2 GP model with dual likelihood via greta.
 #'
-#' Model:
-#'   log(I) = alpha + log(I*) + epsilon, epsilon ~ GP(0, K)
-#'   K = sigma^2 * Matern52(phi) * Exponential(theta)
+#' Follows epiwave.mapping: spatial GP innovations + AR(1) temporal correlation.
+#'   log(I) = alpha + log(I*) + epsilon
+#'   f ~ GP(0, sigma^2 * Matern52(phi)),  n = n_times spatial innovations
+#'   epsilon = AR1(rho = theta, innovations = f)
 #'   cases ~ Poisson(gamma * I)
 #'   prevalence ~ Binomial(N_tested, x_adjusted)
 #'
 #' @param observed_cases Matrix [n_times x n_sites] of case counts
-#' @param I_star Matrix [n_times x n_sites] of Stage 1 mechanistic predictions
+#' @param I_star Matrix [n_times x n_sites] of mechanistic incidence RATE
 #' @param x_star Matrix [n_times x n_sites] of ODE human prevalence
-#' @param coords Matrix [n_obs x 3] of (lon, lat, time_normalised) coordinates
+#' @param population Matrix [n_times x n_sites] of population counts
+#' @param spatial_coords Matrix [n_sites x 2] of (lon, lat) coordinates
 #' @param prev_data List from simulate_prevalence_surveys() (NULL for case-only)
-#' @param use_mechanistic If TRUE, use log(I*) as offset; if FALSE, intercept-only
-#' @param inducing Optional matrix of inducing point coordinates for sparse GP
+#' @param use_mechanistic If TRUE, use log(I*) as offset; if FALSE, drop offset (I*=0)
+#' @param inducing Optional matrix [m x 2] of spatial inducing point coordinates
 #' @param gp_tol Jitter for GP numerical stability (default 1e-3)
 #' @return greta model object for mcmc()
 #' @export
-fit_epiwave_gp <- function(observed_cases, I_star, x_star,
-                           coords, prev_data = NULL,
+fit_epiwave_gp <- function(observed_cases, I_star, x_star, population,
+                           spatial_coords, prev_data = NULL,
                            use_mechanistic = TRUE,
                            inducing = NULL,
                            gp_tol = 1e-3) {
-  # --- Input validation ---
   if (!is.matrix(observed_cases))
     stop("observed_cases must be a matrix [n_times x n_sites]")
   if (!identical(dim(observed_cases), dim(I_star)))
     stop("observed_cases and I_star must have identical dimensions")
-  if (any(is.na(observed_cases)))
-    stop("observed_cases contains NA values")
-  if (any(I_star < 0))
-    stop("I_star contains negative values")
 
   if (!requireNamespace("greta", quietly = TRUE))
     stop("Package 'greta' required. Run R/greta_setup.R first.")
@@ -408,69 +417,67 @@ fit_epiwave_gp <- function(observed_cases, I_star, x_star,
     library(greta.gp)
   })
 
-  I_star_vec <- as.vector(I_star)
-  n_obs      <- length(I_star_vec)
+  n_times <- nrow(observed_cases)
+  n_sites <- ncol(observed_cases)
 
-  # Replace zeros/negatives in I_star to avoid log(0)
-  I_star_clean <- pmax(I_star_vec, 1e-6)
-  log_I_star_raw <- log(I_star_clean)
-  if (any(!is.finite(log_I_star_raw)))
-    stop("log(I_star) contains non-finite values after cleaning")
-
-  # Wrap observed data as greta data arrays
-  cases_greta <- as_data(as.vector(observed_cases))
-
-  # --- Priors ---
+  # --- Priors (calibrated to epiwave.mapping sim_data.R ranges) ---
   alpha     <- normal(0, 1)                                    # intercept
   gamma_rr  <- normal(0.1, 0.05, truncation = c(0.001, Inf))  # reporting rate
-  log_sigma <- normal(-1, 1)                                   # log GP variance
-  sigma2    <- exp(log_sigma)
-  log_phi   <- normal(1, 1)                                    # log spatial lengthscale
-  phi       <- exp(log_phi)
-  log_theta <- normal(1, 1)                                    # log temporal lengthscale
-  theta     <- exp(log_theta)
+  sigma2    <- lognormal(-0.5, 0.5)                            # GP variance
+  phi       <- lognormal(0.5, 0.5)                             # spatial lengthscale
+  theta     <- variable(lower = 0, upper = 1)                  # AR(1) temporal correlation
 
-  # --- GP kernel and residuals ---
-  K <- build_gp_kernel(sigma2, phi, theta)
+  # --- Spatial GP + AR(1) temporal (epiwave.mapping pattern) ---
+  K_space <- build_gp_kernel(phi, sigma2)
+  coord_array <- as_data(spatial_coords)
 
-  coord_array <- as_data(coords)
-  epsilon <- if (!is.null(inducing)) {
+  # Spatial innovations: n_times columns, each spatially correlated
+  f <- if (!is.null(inducing)) {
     inducing_array <- as_data(inducing)
-    gp(coord_array, K, inducing = inducing_array, tol = gp_tol)
+    gp(coord_array, K_space, inducing = inducing_array, n = n_times, tol = gp_tol)
   } else {
-    gp(coord_array, K, tol = gp_tol)
+    gp(coord_array, K_space, n = n_times, tol = gp_tol)
   }
 
-  # --- Latent infection incidence ---
-  log_I <- if (use_mechanistic) {
-    alpha + log_I_star_raw + epsilon
+  # AR(1) temporal correlation: epsilon_mat is [n_sites x n_times]
+  epsilon_mat <- ar1(rho = theta, innovations = f)
+
+  # --- Latent infection incidence rate ---
+  # I_star is a RATE [n_times x n_sites], transpose to [n_sites x n_times]
+  log_I_mat <- if (use_mechanistic) {
+    I_star_t <- t(pmax(I_star, 1e-6))
+    alpha + log(I_star_t) + epsilon_mat
   } else {
-    alpha + mean(log_I_star_raw) + epsilon
+    # I* = 0: standard geostatistical model, no mechanistic information
+    alpha + epsilon_mat
   }
-  I_latent <- exp(log_I)
+  I_latent_mat <- exp(log_I_mat)
 
   # --- Case likelihood (Poisson) ---
-  expected_cases <- gamma_rr * I_latent
+  # Population enters here, not in I* (Nick's specification)
+  pop_t <- t(population)
+  cases_t <- t(observed_cases)
+  cases_greta <- as_data(cases_t)
+  expected_cases <- gamma_rr * I_latent_mat * pop_t
   distribution(cases_greta) <- poisson(expected_cases)
 
   # --- Prevalence likelihood (Binomial) if data provided ---
+  # Survey indices are into as.vector([n_sites x n_times]) — same as epsilon_mat
   if (!is.null(prev_data)) {
-    x_star_vec <- as.vector(x_star)
-    x_at_surveys <- pmax(x_star_vec[prev_data$survey_indices], 1e-6)
-    x_at_surveys <- pmin(x_at_surveys, 0.999)
+    x_star_vec <- as.vector(t(x_star))  # [n_sites x n_times] column-major
+    x_at_surveys <- pmax(pmin(x_star_vec[prev_data$survey_indices], 0.999), 1e-6)
 
-    # GP adjustment to prevalence at survey locations
-    # Use ilogit to map adjusted prevalence to valid (0,1) probability
-    gp_at_surveys  <- exp(epsilon[prev_data$survey_indices])
-    log_odds_base  <- log(x_at_surveys) - log(1 - x_at_surveys)
-    log_odds_adj   <- log_odds_base + epsilon[prev_data$survey_indices]
-    prev_prob      <- ilogit(log_odds_adj)
+    # Flatten epsilon_mat to vector in same order as x_star_vec
+    eps_vec <- epsilon_mat[seq_len(length(x_star_vec))]
+    log_odds_base <- log(x_at_surveys) - log(1 - x_at_surveys)
+    log_odds_adj  <- log_odds_base + eps_vec[prev_data$survey_indices]
+    prev_prob     <- ilogit(log_odds_adj)
 
     n_pos_greta <- as_data(prev_data$n_positive)
     distribution(n_pos_greta) <- binomial(prev_data$n_tested, prev_prob)
   }
 
-  model(alpha, gamma_rr, log_sigma, log_phi, log_theta)
+  model(alpha, gamma_rr, sigma2, phi, theta)
 }
 
 
@@ -497,9 +504,9 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
                                   true_params = NULL,
                                   include_interventions = TRUE,
                                   run_mcmc = TRUE,
-                                  n_samples = 1000, warmup = 500, chains = 2,
+                                  n_samples = 1000, warmup = 1000, chains = 2,
                                   use_sparse_gp = TRUE,
-                                  n_inducing = 25,
+                                  n_inducing = 40,
                                   draws_gp_with = NULL,
                                   draws_gp_without = NULL) {
 
@@ -509,11 +516,11 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
       baseline_m = 2.0, baseline_a = 0.3, baseline_g = 1/10,
       b = 0.8, c = 0.8, r = 1/7,
       population = 10000, reporting_rate = 0.1,
-      # True GP hyperparameters
+      # True GP hyperparameters (calibrated to epiwave.mapping sim_data.R)
       alpha = 0,          # intercept (no systematic bias)
-      gp_sigma2 = 0.3,    # GP marginal variance
+      gp_sigma = 0.6,     # GP marginal SD
       gp_phi = 3.0,       # spatial lengthscale
-      gp_theta = 0.3      # temporal lengthscale (on normalised time)
+      gp_rho = 0.75       # AR(1) temporal correlation
     )
   }
 
@@ -547,70 +554,63 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
 
   pop_matrix <- matrix(true_params$population, nrow = length(times), ncol = n_sites)
 
+  # I* is a RATE (m*a*b*z), not a count — per Nick's specification
   I_star <- compute_mechanistic_prediction(
     m_matrix = m_true, a_matrix = a_true, b = true_params$b,
-    z_matrix = ode_solution$z, population_matrix = pop_matrix
+    z_matrix = ode_solution$z
   )
 
   x_star <- ode_solution$x  # human prevalence from ODE
 
-  # ---- Step 4: Build coordinate matrix (lon, lat, time_normalised) ----
-  time_norm <- (times - min(times)) / max(times - min(times))  # [0, 1]
-  lon_norm  <- (spatial_coords[, 1] - min(spatial_coords[, 1])) /
-    max(spatial_coords[, 1] - min(spatial_coords[, 1]) + 1e-10)
-  lat_norm  <- (spatial_coords[, 2] - min(spatial_coords[, 2])) /
-    max(spatial_coords[, 2] - min(spatial_coords[, 2]) + 1e-10)
-
-  # Expand to full grid: each row is one (site, time) observation
-  coord_grid <- expand.grid(time_idx = seq_along(times), site_idx = seq_len(n_sites))
-  coords <- cbind(
-    lon  = lon_norm[coord_grid$site_idx],
-    lat  = lat_norm[coord_grid$site_idx],
-    time = time_norm[coord_grid$time_idx]
+  # ---- Step 4: Normalise spatial coordinates ----
+  spatial_coords_norm <- cbind(
+    lon = (spatial_coords[, 1] - min(spatial_coords[, 1])) /
+      max(diff(range(spatial_coords[, 1])) + 1e-10),
+    lat = (spatial_coords[, 2] - min(spatial_coords[, 2])) /
+      max(diff(range(spatial_coords[, 2])) + 1e-10)
   )
 
-  # ---- Step 5: Simulate true GP residuals ----
+  # ---- Step 5: Simulate true GP residuals (spatial GP + AR(1)) ----
+  # epsilon_true_mat is [n_sites x n_times] — matches gp() output orientation
   set.seed(321)
-  epsilon_true <- simulate_gp_residuals(
-    coords  = coords,
-    sigma2  = true_params$gp_sigma2,
-    phi     = true_params$gp_phi,
-    theta   = true_params$gp_theta
+  epsilon_true_mat <- simulate_gp_residuals(
+    spatial_coords = spatial_coords_norm,
+    n_times        = length(times),
+    sigma          = true_params$gp_sigma,
+    phi            = true_params$gp_phi,
+    rho            = true_params$gp_rho
   )
 
   # ---- Step 6: Generate observed data with GP residuals ----
-  I_star_vec <- as.vector(I_star)
-  I_true_vec <- exp(true_params$alpha + log(I_star_vec + 1e-10) + epsilon_true)
-  expected_cases <- true_params$reporting_rate * I_true_vec
+  # I_star is a RATE, work in [n_sites x n_times] to match epsilon
+  I_star_t <- t(pmax(I_star, 1e-6))  # [n_sites x n_times]
+  x_star_t <- t(x_star)              # [n_sites x n_times]
+  pop_t    <- t(pop_matrix)           # [n_sites x n_times]
+  I_true_mat <- exp(true_params$alpha + log(I_star_t) + epsilon_true_mat)
 
+  # Cases = Poisson(γ × I_rate × population) — population enters here
   set.seed(456)
-  observed_cases_vec <- rpois(length(expected_cases), lambda = pmax(expected_cases, 1e-10))
-  observed_cases <- matrix(observed_cases_vec, nrow = length(times), ncol = n_sites)
+  expected_cases_mat <- true_params$reporting_rate * I_true_mat * pop_t
+  cases_mat <- matrix(rpois(length(expected_cases_mat), expected_cases_mat),
+                      nrow = n_sites, ncol = length(times))
+  observed_cases <- t(cases_mat)  # back to [n_times x n_sites] for storage
 
-  # Prevalence surveys
-  gp_adjustment <- exp(epsilon_true)
+  # Prevalence surveys — pass [n_sites x n_times] so indices match epsilon
+  gp_adjustment <- as.vector(exp(epsilon_true_mat))
   prev_data <- simulate_prevalence_surveys(
-    x_matrix = x_star, gp_adjustment = gp_adjustment,
+    x_matrix = x_star_t, gp_adjustment = gp_adjustment,
     survey_fraction = 0.3, seed = 789
   )
 
-  message(sprintf("Data generated: %d sites x %d times = %d obs, %d prevalence surveys",
-                  n_sites, length(times), length(I_star_vec), length(prev_data$n_positive)))
+  message(sprintf("Data generated: %d sites x %d times, %d prevalence surveys",
+                  n_sites, length(times), length(prev_data$n_positive)))
 
-  # ---- Step 7: Inducing points for sparse GP ----
+  # ---- Step 7: Spatial inducing points for sparse GP ----
   inducing <- NULL
-  if (use_sparse_gp) {
-    n_spatial  <- min(ceiling(sqrt(n_inducing)), n_sites)
-    n_temporal <- min(ceiling(n_inducing / n_spatial), length(times))
-    ind_s <- seq(1, n_sites, length.out = n_spatial)
-    ind_t <- seq(1, length(times), length.out = n_temporal)
-    ind_grid <- expand.grid(s = round(ind_s), t = round(ind_t))
-    inducing <- cbind(
-      lon  = lon_norm[ind_grid$s],
-      lat  = lat_norm[ind_grid$s],
-      time = time_norm[ind_grid$t]
-    )
-    message(sprintf("Sparse GP: %d inducing points", nrow(inducing)))
+  if (use_sparse_gp && n_inducing < n_sites) {
+    ind_idx <- seq(1, n_sites, length.out = n_inducing)
+    inducing <- spatial_coords_norm[round(ind_idx), , drop = FALSE]
+    message(sprintf("Sparse GP: %d spatial inducing points", nrow(inducing)))
   }
 
   # ---- Step 8: Fit GP+offset model ----
@@ -619,8 +619,8 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
     model_gp_with <- tryCatch(
       fit_epiwave_gp(
         observed_cases = observed_cases, I_star = I_star, x_star = x_star,
-        coords = coords, prev_data = prev_data,
-        use_mechanistic = TRUE, inducing = inducing
+        population = pop_matrix, spatial_coords = spatial_coords_norm,
+        prev_data = prev_data, use_mechanistic = TRUE, inducing = inducing
       ),
       error = function(e) { message("Model build error (GP+offset): ", e$message); NULL }
     )
@@ -640,8 +640,8 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
     model_gp_without <- tryCatch(
       fit_epiwave_gp(
         observed_cases = observed_cases, I_star = I_star, x_star = x_star,
-        coords = coords, prev_data = prev_data,
-        use_mechanistic = FALSE, inducing = inducing
+        population = pop_matrix, spatial_coords = spatial_coords_norm,
+        prev_data = prev_data, use_mechanistic = FALSE, inducing = inducing
       ),
       error = function(e) { message("Model build error (GP-only): ", e$message); NULL }
     )
@@ -659,18 +659,18 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
   }
 
   # ---- Collect results ----
-  I_true_matrix <- matrix(I_true_vec, nrow = length(times), ncol = n_sites)
+  # Transpose back to [n_times x n_sites] for storage/plotting
+  I_true_matrix <- t(I_true_mat)
   results <- list(
     true_incidence         = I_true_matrix,
     observed_cases         = observed_cases,
     mechanistic_prediction = I_star,
     x_star                 = x_star,
-    epsilon_true           = epsilon_true,
-    coords                 = coords,
+    epsilon_true_mat       = epsilon_true_mat,
+    spatial_coords         = spatial_coords_norm,
     prev_data              = prev_data,
     draws_gp_with          = draws_gp_with,
     draws_gp_without       = draws_gp_without,
-    spatial_coords         = spatial_coords,
     times                  = times,
     true_params            = true_params
   )
@@ -702,9 +702,9 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
   print(p1)
 
   # Plot 2: True GP residual surface
-  eps_matrix <- matrix(epsilon_true, nrow = length(times), ncol = n_sites)
+  # epsilon_true_mat is [n_sites x n_times], transpose for plotting
   eps_df <- expand.grid(month = seq_along(times), site = seq_len(n_sites))
-  eps_df$epsilon <- as.vector(eps_matrix)
+  eps_df$epsilon <- as.vector(t(epsilon_true_mat))
   p2 <- ggplot(eps_df, aes(x = month, y = factor(site), fill = epsilon)) +
     geom_tile() +
     scale_fill_gradient2(low = "#C00000", mid = "white", high = "#2E75B6", midpoint = 0) +
@@ -729,13 +729,13 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
 
     # Plot 4: GP hyperparameter posteriors
     gp_hyper_df <- data.frame(
-      log_sigma = gp_df$log_sigma,
-      log_phi   = gp_df$log_phi,
-      log_theta = gp_df$log_theta
+      sigma2 = gp_df$sigma2,
+      phi    = gp_df$phi,
+      theta_rho = gp_df$theta
     )
     true_vals <- data.frame(
-      param = c("log_sigma", "log_phi", "log_theta"),
-      value = c(log(true_params$gp_sigma2), log(true_params$gp_phi), log(true_params$gp_theta))
+      param = c("sigma2", "phi", "theta_rho"),
+      value = c(true_params$gp_sigma^2, true_params$gp_phi, true_params$gp_rho)
     )
 
     gp_long <- tidyr::pivot_longer(gp_hyper_df, everything(), names_to = "param", values_to = "value")
@@ -752,7 +752,7 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
     # Plot 5: Posterior predictive check
     gamma_est <- median(gp_df$gamma_rr)
     alpha_est <- median(gp_df$alpha)
-    pred_gp_with <- gamma_est * exp(alpha_est) * I_star[, site_idx]
+    pred_gp_with <- gamma_est * exp(alpha_est) * I_star[, site_idx] * pop_matrix[, site_idx]
 
     pp_df <- data.frame(
       month    = seq_along(times),
