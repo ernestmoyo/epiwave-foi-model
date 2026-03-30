@@ -1,25 +1,35 @@
 ---
-layout: center
+layout: default
 ---
 
-# Simulation Study — Stage 1 Output
+# Simulation Study: Rate Space vs Count Space
 
-<div class="flex justify-center">
-<img src="/images/simulation_study_site1.png" class="h-72 rounded shadow-lg" />
+Two-panel view separating what the model predicts (rate) from what Stage 2 fits to (counts)
+
+<div class="flex justify-center mt-2">
+<img src="/images/sim_twopanel_site1.png" class="h-72 rounded shadow-lg" />
 </div>
 
-<div class="mt-2 text-xs text-center max-w-2xl mx-auto">
+<div class="grid grid-cols-2 gap-4 mt-2 text-xs">
 
-**What you're seeing:** The blue line (true incidence) and red dashed line (mechanistic prediction $I^*$) overlap almost perfectly — confirming Stage 1 correctly recovers transmission dynamics. Black dots (observed cases) are ~10% of true incidence (reporting rate = 0.1), with Poisson noise. The seasonal oscillation reflects bimodal East African rainfall forcing on mosquito abundance, with declining amplitude from simulated ITN scale-up (0% → 70% coverage).
+<div class="p-2 bg-blue-50 rounded border border-blue-200">
+
+**Top — Rate Space:** Red dashed = I* (mechanistic rate from ODE). Blue = true incidence with GP residuals. The gap = exp(epsilon), showing how the GP distorts the mechanistic prediction. GP pushes true incidence above I* at some times, below at others.
+
+</div>
+
+<div class="p-2 bg-green-50 rounded border border-green-200">
+
+**Bottom — Count Space:** Blue line = expected cases (gamma x I_true x N). Black dots = observed (Poisson draws). This is what Stage 2 actually fits to. The declining trend reflects ITN scale-up (0% to 70% coverage).
+
+</div>
 
 </div>
 
 <!--
-This plot shows the Stage 1 output for Site 1 in our simulation study. Three things to notice:
+This two-panel view was designed to separate two different questions. The top panel shows rate space — the mechanistic prediction I-star from the ODE versus the true incidence including GP residuals. These are on the same scale, so you can see exactly where and how much the GP distorts the mechanistic prediction. The gap between the red dashed line and blue line IS the epsilon structure.
 
-First, the blue line (true incidence) and the red dashed line (mechanistic prediction I-star) are essentially identical — they overlay each other. This confirms that when we solve the Ross-Macdonald ODEs with the correct fixed parameters, we recover the true transmission dynamics perfectly. This is expected in a simulation study where we know the true parameters.
+The bottom panel shows count space — what the model actually observes. Expected cases are gamma times I-true times population, and observed cases are Poisson draws around that expectation. Notice the cases are roughly 10% of the true incidence rate times population — that's the reporting rate gamma = 0.1.
 
-Second, the black dots — observed cases — are much lower than the true incidence line. They represent about 10% of true incidence, which is our simulated reporting rate. There's also Poisson noise adding scatter.
-
-Third, notice the seasonal pattern — two peaks per year from the bimodal East African rainfall seasonality, with declining amplitude over time. That declining trend is the simulated ITN scale-up from 0% to 70% coverage reducing transmission. The model correctly captures this intervention effect through the apply_interventions function modifying m, a, and g parameters.
+Previously this was a single panel mixing rates and counts on the same axis, which made the mechanistic prediction invisible. The two-panel design was developed during our walkthrough session to show both quantities on appropriate scales.
 -->

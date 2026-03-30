@@ -2,60 +2,40 @@
 layout: default
 ---
 
-# MCMC Convergence Diagnostics
+# MCMC Diagnostics: What's Working and What's Not
 
-<div class="flex justify-center">
-<img src="/images/mcmc_trace_plots.png" class="h-40 rounded shadow-lg" />
+<div class="grid grid-cols-2 gap-3 mt-2">
+
+<div>
+<div class="text-xs font-bold mb-1">GP Hyperparameter Posteriors</div>
+<img src="/images/gp_hyperparameter_posteriors.png" class="rounded shadow" />
+<div class="text-xs mt-1 text-gray-600">Red dashed = true values. Multimodal posteriors for phi and sigma2 suggest insufficient mixing.</div>
 </div>
 
-<div class="grid grid-cols-2 gap-2 mt-1">
-
-<div class="p-2 rounded-lg bg-blue-50 border border-blue-200 text-xs">
-
-**WITH Mechanistic Offset**
-
-| Parameter | $\hat{R}$ | ESS | Status |
-|:---------:|:----------:|:---:|:------:|
-| log_rate ($\lambda$) | 1.004 | 1,095 | Converged |
-| log_size | 1.004 | 489 | Converged |
-
-<div class="mt-1 text-xs opacity-80">
-log_size: mean=5.49, sd=0.49 (size≈240). Reparam from Beta(phi) → Normal(log_size) — ESS 82→<b>489</b>.
+<div>
+<div class="text-xs font-bold mb-1">Posterior Predictive Check (Site 1)</div>
+<img src="/images/posterior_predictive_check.png" class="rounded shadow" />
+<div class="text-xs mt-1 text-gray-600">GP+offset captures the shape but underestimates peaks — consistent with alpha bias.</div>
 </div>
 
 </div>
 
-<div class="p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs">
+<div class="mt-2 p-2 bg-amber-50 rounded-lg border border-amber-200 text-xs">
 
-**WITHOUT Mechanistic Offset**
+**Diagnosed issues (from walkthrough analysis):**
 
-| Parameter | $\hat{R}$ | ESS | Status |
-|:---------:|:----------:|:---:|:------:|
-| log_rate ($\lambda$) | 1.002 | 1,540 | Converged |
-| phi ($\phi$) | 1.000 | 2,769 | Converged |
+1. **phi = 3.0 on [0,1] normalised coords** produces >86% correlation between ALL site pairs — the data cannot distinguish phi=3 from phi=10. Prior (lognormal(0.5,0.5), median=1.65) pulls phi toward ~1.5.
+2. **1000 samples / 500 warmup** may be insufficient — multimodal posteriors in phi and sigma2.
+3. **147 prevalence surveys** across 490 site-time pairs may not break the alpha-gamma ridge fully.
 
-<div class="mt-1 text-xs opacity-80">
-phi=0.357 (size≈1.8) — heavy overdispersion, no mechanistic structure absorbs variation.
-</div>
-
-</div>
-
-</div>
-
-<div class="mt-1 p-1 bg-gray-100 text-xs rounded text-center">
-
-**Overdispersion Story:** WITH size≈240 (near-Poisson) vs WITHOUT size≈1.8 (heavy overdispersion) — mechanistic model explains virtually all variation
+**Questions for supervisors:** Should we increase samples (4000+)? Adjust the simulation's true phi to a value the data can actually distinguish? Increase survey coverage in the simulation?
 
 </div>
 
 <!--
-These are the MCMC trace plots for both models. The top row shows the WITH offset model, the bottom shows WITHOUT.
+These are the actual diagnostic plots from our run. The GP hyperparameter posteriors show multimodal distributions — phi concentrates around 1.2 to 1.5 but the true value is 3.0 (red dashed line). We diagnosed why: on normalised coordinates in a [0,1] square, phi equals 3 means minimum off-diagonal correlation of 86%. Every site is nearly perfectly correlated with every other site. The data simply cannot distinguish phi equals 3 from phi equals 5 or 10 — they all produce nearly identical correlation matrices.
 
-For log_rate, both models converge well — R-hat near 1, good ESS. The WITH model estimates log_rate around minus 2.30, which translates to a reporting rate of about 10% — matching our true value.
+The posterior predictive check shows the GP plus offset model captures the seasonal shape but consistently underestimates the peaks. This is consistent with the alpha bias — alpha is estimated at -0.66 instead of 0, which pulls all predictions down.
 
-The interesting story is the overdispersion parameter. After reparameterising from phi ~ Beta(1,9) to log_size ~ Normal(3,1), the WITH offset model now converges cleanly — ESS jumped from 82 to 489. The estimated log_size of 5.49 translates to size ~240, which is near-Poisson. This confirms the mechanistic offset already explains the temporal and spatial variation.
-
-In the WITHOUT offset model, phi is 0.357, meaning size is about 1.8 — very heavy overdispersion. Without the mechanistic structure, all that temporal variation looks like overdispersion to the model.
-
-The reparameterisation lesson: when a parameter gets pushed to a boundary by the data, move to an unconstrained scale. The log transform solved the boundary mixing problem completely.
+These are questions I need guidance on: Should I increase the MCMC samples? Should I adjust the simulation design so that the true phi is on a scale the data can actually resolve? And how much prevalence data do we need for the dual likelihood to break the alpha-gamma ridge?
 -->

@@ -2,40 +2,50 @@
 layout: default
 ---
 
-# Next Steps
+# Questions and Next Steps
 
-From simulation validation to production-scale Angola mapping
+Current status: pipeline works end-to-end, but convergence needs addressing before real data
 
-<div class="grid grid-cols-2 gap-4 mt-4">
+<div class="grid grid-cols-2 gap-3 mt-3">
 
-<div class="p-3 rounded-lg bg-blue-50 border-l-4 border-blue-500 text-sm">
+<div class="p-3 rounded-lg bg-amber-50 border-l-4 border-amber-500 text-sm">
 
-### 1. Angola DHIS2 Integration
-18 provinces × 60+ months of routine case data from NMCP via DHIS2
-- Quality checks for reporting completeness
-- Outlier detection and data cleaning
-- Monthly aggregated case counts
+### Questions for Supervisors
+
+1. **Alpha-gamma ridge:** The dual likelihood has not fully broken the ridge at 30% survey coverage. How much prevalence data is needed? Is this a simulation design issue or a structural limitation?
+
+2. **Simulation phi:** True phi=3.0 on normalised [0,1] coords means >86% spatial correlation between all sites. Should we lower phi or use raw coordinates so the GP has actual spatial variation to estimate?
+
+3. **Sampling budget:** 1000 samples shows multimodal posteriors. Should we invest in 4000+ samples before diagnosing further, or address the priors first?
+
+4. **Real data readiness:** What data sources should we prioritise for the study site — publicly available prevalence surveys, routine case data, or both?
 
 </div>
 
-<div class="p-3 rounded-lg bg-green-50 border-l-4 border-green-500 text-sm">
+<div class="p-3 rounded-lg bg-blue-50 border-l-4 border-blue-500 text-sm">
 
-### 2. Vector Atlas Parameters
-Empirical estimates for $m$, $a$, $g$ from entomological surveys
-- Map survey-level vector parameters to province-level inputs
-- Temperature-dependent parameter models as fallback
-- Incorporate insecticide resistance data
+### Immediate Plan
+
+1. **Address convergence** — increase samples, review prior-data consistency for phi and sigma2
+2. **Sensitivity study** — vary survey_fraction (10%, 30%, 50%) to quantify how much prevalence data breaks the ridge
+3. **Real data scoping** — identify available data for the study site
+
+### Framework Paper (Obj. 2)
+
+4. **Misspecification tests** — does the offset help even when I\* is wrong? (robustness check)
+5. **Write-up** — methods, simulation results, WITH vs WITHOUT comparison
+
 
 </div>
 
 </div>
 
 <!--
-Looking ahead, there are four key next steps. First, integrating real data from Angola's DHIS2 system — 18 provinces with over 60 months of routine case data. This will be the first real-world test of the framework.
+These are the questions I need guidance on. The key convergence issues are well-diagnosed — we know what's happening and have specific hypotheses about why. But I need input on which direction to prioritise.
 
-Second, obtaining empirical Vector Atlas parameters for Angola — mapping entomological survey data to province-level inputs for m, a, and g. Where survey data aren't available, we'll use temperature-dependent models as fallback.
+The alpha-gamma ridge is the most important question. The dual likelihood should break it mathematically. But in our simulation with 147 prevalence surveys, the ridge persists. Is this because we don't have enough surveys, or is there something else going on?
 
-Third, the INLA/SPDE extension. Now that we've validated the offset approach works with the Negative Binomial, we can re-introduce spatial correlation using the Matern SPDE on a mesh via R-INLA. This avoids the Cholesky issues that killed the GP approach because SPDE uses sparse precision matrices instead of dense covariance matrices. This is proven technology — it's what MAP uses.
+The phi question is about simulation design — not the model itself. On normalised coordinates, phi=3 produces near-total spatial correlation, so there's almost no information in the data to estimate the lengthscale. We could either lower the true phi or use unnormalised coordinates.
 
-Fourth, completing the framework documentation and beginning manuscript preparation for the Objective 2 paper.
+On real data — we need to scope what's available for the study site and confirm data access permissions.
 -->

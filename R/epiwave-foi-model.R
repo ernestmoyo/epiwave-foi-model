@@ -678,28 +678,42 @@ simulate_and_estimate <- function(n_sites = 10, n_times = 48,
   # ---- Diagnostic Plots ----
   site_idx <- 1
 
-  # Plot 1: Stage 1 mechanistic prediction vs true (with GP residuals) vs observed
-  plot_data <- data.frame(
-    month            = seq_along(times),
-    true_incidence   = I_true_matrix[, site_idx],
-    observed_cases   = observed_cases[, site_idx],
-    mechanistic_pred = I_star[, site_idx]
+  # Plot 1: Two-panel — rate space (I* vs I_true) and count space (expected vs observed)
+  df_rate <- data.frame(
+    month = seq_along(times),
+    mechanistic_istar = I_star[, site_idx],
+    true_incidence    = I_true_matrix[, site_idx]
   )
-  p1 <- ggplot(plot_data, aes(x = month)) +
-    geom_line(aes(y = true_incidence,   colour = "True Incidence (with GP)"), linewidth = 1) +
-    geom_point(aes(y = observed_cases,  colour = "Observed Cases"), alpha = 0.6, size = 2) +
-    geom_line(aes(y = mechanistic_pred, colour = "Mechanistic I* (no GP)"),
+  df_count <- data.frame(
+    month          = seq_along(times),
+    expected_cases = true_params$reporting_rate * I_true_matrix[, site_idx] * pop_matrix[, site_idx],
+    observed_cases = observed_cases[, site_idx]
+  )
+  p1a <- ggplot(df_rate, aes(x = month)) +
+    geom_line(aes(y = mechanistic_istar, colour = "I* (mechanistic rate)"),
               linetype = "dashed", linewidth = 1) +
-    scale_colour_manual(values = c("True Incidence (with GP)" = "#2E75B6",
-                                   "Observed Cases" = "black",
-                                   "Mechanistic I* (no GP)" = "#C00000")) +
-    labs(title = sprintf("Stage 1 vs True Incidence (Site %d)", site_idx),
-         subtitle = "Gap between dashed (I*) and solid (true) = GP residual structure",
-         x = "Month", y = "Monthly Incidence / Cases", colour = "") +
+    geom_line(aes(y = true_incidence, colour = "I_true (with GP residuals)"), linewidth = 1) +
+    scale_colour_manual(values = c("I* (mechanistic rate)" = "#C00000",
+                                   "I_true (with GP residuals)" = "#2E75B6")) +
+    labs(title = sprintf("Site %d — Rate Space", site_idx),
+         subtitle = "Gap between lines = exp(epsilon) from spatial GP + AR(1)",
+         x = NULL, y = "Infection incidence rate", colour = "") +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+          plot.title = element_text(face = "bold"), axis.text.x = element_blank())
+  p1b <- ggplot(df_count, aes(x = month)) +
+    geom_line(aes(y = expected_cases, colour = "Expected (gamma * I_true * N)"), linewidth = 1) +
+    geom_point(aes(y = observed_cases, colour = "Observed (Poisson draws)"),
+               alpha = 0.6, size = 2) +
+    scale_colour_manual(values = c("Expected (gamma * I_true * N)" = "#2E75B6",
+                                   "Observed (Poisson draws)" = "black")) +
+    labs(title = "Count Space",
+         subtitle = "What Stage 2 actually fits to (Poisson likelihood)",
+         x = "Month", y = "Case counts", colour = "") +
     theme_minimal(base_size = 12) +
     theme(legend.position = "bottom", panel.grid.minor = element_blank(),
           plot.title = element_text(face = "bold"))
-  print(p1)
+  gridExtra::grid.arrange(p1a, p1b, ncol = 1)
 
   # Plot 2: True GP residual surface
   # epsilon_true_mat is [n_sites x n_times], transpose for plotting

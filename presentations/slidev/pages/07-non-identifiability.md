@@ -2,69 +2,51 @@
 layout: default
 ---
 
-# Critical Discovery: Parameter Non-Identifiability
+# Parameter Non-Identifiability: Current Status
 
-$\alpha$ and $\gamma$ trade off freely — only their **product** is estimable from count data
+<div class="grid grid-cols-3 gap-3 mt-2">
 
-<div class="grid grid-cols-2 gap-4 mt-3">
+<div class="p-2 rounded-lg bg-red-50 border border-red-300 text-xs">
 
-<div class="p-3 rounded-lg bg-red-50 border border-red-300 text-sm">
+### The Problem (case-only)
 
-### The Problem
+cases ~ Poisson(γ · exp(α) · I\* · N)
 
-Original model: $\mu = \gamma \cdot e^\alpha \cdot I^*$
+For any constant k:
 
-For any constant $k$:
+(α + k, γ · exp(-k)) → **identical likelihood**
 
-$$(\alpha + k,\; \gamma \cdot e^{-k}) \;\rightarrow\; \text{identical likelihood}$$
-
-<div class="mt-3 text-sm">
-
-| Chain | $\alpha$ | $\gamma$ | Product |
-|:-----:|:--------:|:--------:|:-------:|
-| 1 | -0.44 | 0.156 | **0.1003** |
-| 2 | -0.50 | 0.165 | **0.1003** |
-
-Chains wander the **ridge** of constant product
-
-</div>
-</div>
-
-<div class="p-3 rounded-lg bg-green-50 border border-green-400 text-sm">
-
-### The Fix
-
-Merge into single identified parameter:
-
-$$\lambda = \log(\gamma) + \alpha$$
-
-$$e^\lambda = \text{reporting rate}$$
-
-<div class="mt-2 text-sm">
-
-**Result:**
-- $\hat{R} < 1.05$
-- ESS $> 1000$
-- Clean convergence
+The product exp(α)·γ is identifiable, but individual parameters are not.
 
 </div>
 
-<div class="mt-2 p-2 bg-white rounded border text-sm">
+<div class="p-2 rounded-lg bg-amber-50 border border-amber-300 text-xs">
 
-Also fixed: NegBin parameterisation **inverted** — `prob = mu/(mu+size)` should be `size/(size+mu)`. One character, hours of debugging.
+### The Fix: Dual Likelihood
 
+Add **prevalence surveys** (Binomial):
+
+$$Y_{s,t} \sim \text{Binomial}(N_{s,t},\; x_{s,t})$$
+
+Prevalence is **unaffected by** γ, so it separately informs α.
+
+**Current result (10 sites, 147 surveys):**
+Ridge persists. **Question:** Is 30% survey coverage sufficient?
+
+</div>
+
+<div class="flex items-center justify-center">
+<img src="/images/alpha_gamma_ridge.png" class="h-44 rounded shadow-lg" />
 </div>
 
 </div>
 
+<div class="mt-2 text-xs text-center text-gray-600">
+Dashed lines = true values (α=0, γ=0.1). The negative correlation ridge is visible — dual likelihood has not fully resolved it at this sample size.
 </div>
 
 <!--
-This was a critical discovery during development. The original model had both an intercept alpha and a reporting rate gamma. These are fundamentally non-identifiable — for any constant k, you can shift alpha up by k and multiply gamma by e-to-the-minus-k and get exactly the same likelihood.
+This is a critical finding. With case data alone, alpha and gamma are fundamentally non-identifiable. The dual likelihood design — adding prevalence surveys via a Binomial likelihood — should break this ridge because prevalence data informs infection incidence independently of reporting rate.
 
-In practice, the MCMC chains would wander along this ridge. Chain 1 would find alpha equals negative 0.44 with gamma 0.156, Chain 2 would find alpha negative 0.5 with gamma 0.165 — but the product was always 0.1003, which is the true reporting rate of 0.1.
-
-The fix was simple once we understood the problem — merge them into a single parameter lambda equals log(gamma) plus alpha. Now there's one identified parameter and convergence is clean.
-
-I also want to mention a bug that cost hours to find — the Negative Binomial parameterisation was inverted. In greta, prob = size/(size+mu), not mu/(mu+size). One character difference. Every proposed likelihood value was near impossible, giving 0% acceptance. This is the kind of detail that matters enormously in practice.
+However, our current simulation with 147 prevalence surveys across 490 site-time combinations still shows a clear ridge in the joint posterior. The question for supervisors is: is 30% survey coverage sufficient? With real data, how much prevalence data would we typically have, and is it enough to resolve this degeneracy? This is a legitimate research question — how much prevalence information does the dual likelihood need to work?
 -->

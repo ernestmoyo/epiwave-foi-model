@@ -2,62 +2,60 @@
 layout: default
 ---
 
-# Simulation-Estimation Validation
+# Simulation-Estimation: Current Results
 
-10 sites $\times$ 49 months &nbsp;|&nbsp; 2000 MCMC samples &nbsp;|&nbsp; 2 chains &nbsp;|&nbsp; HMC via greta/TensorFlow
+Core comparison: **WITH I\* offset** vs **I\*=0 (standard geostatistical)** &nbsp;|&nbsp; 10 sites x 49 time steps, 1000 samples
 
-<div class="grid grid-cols-4 gap-3 mt-4">
+<div class="grid grid-cols-2 gap-4 mt-4">
 
-<div class="p-3 rounded-lg bg-blue-50 text-center">
-<div class="text-3xl font-bold text-blue-700">88%</div>
-<div class="text-sm mt-1 font-semibold">RMSE Improvement</div>
-<div class="text-xs mt-1 opacity-70">WITH offset vs WITHOUT</div>
-</div>
-
-<div class="p-3 rounded-lg bg-green-50 text-center">
-<div class="text-3xl font-bold text-green-700">14.7</div>
-<div class="text-sm mt-1 font-semibold">RMSE WITH offset</div>
-<div class="text-xs mt-1 opacity-70">7.2% of mean observed</div>
-</div>
-
-<div class="p-3 rounded-lg bg-red-50 text-center">
-<div class="text-3xl font-bold text-red-600">125.5</div>
-<div class="text-sm mt-1 font-semibold">RMSE WITHOUT offset</div>
-<div class="text-xs mt-1 opacity-70">61.3% of mean observed</div>
-</div>
-
-<div class="p-3 rounded-lg bg-purple-50 text-center">
-<div class="text-3xl font-bold text-purple-700">0.1003</div>
-<div class="text-sm mt-1 font-semibold">Recovered reporting rate</div>
-<div class="text-xs mt-1 opacity-70">True = 0.1000</div>
-</div>
-
-</div>
-
-<div class="mt-3 p-2 bg-gray-50 text-sm rounded-lg">
-
-**Precision comparison:** WITH model 95% CI width = **0.0013** vs WITHOUT = **0.0133** — mechanistic offset provides **10x tighter** credible intervals
-
-</div>
-
+<div class="p-3 rounded-lg bg-green-50 text-center border border-green-300">
+<div class="text-xl font-bold text-green-700">WITH I* Offset</div>
+<div class="text-xs mt-1">log(I) = α + log(I*) + ε</div>
 <div class="mt-2 text-xs">
 
-| Metric | WITH offset | WITHOUT offset | Improvement |
-|:-------|:-----------:|:--------------:|:-----------:|
-| RMSE | 14.7 | 125.5 | **88%** |
-| RMSE / mean | 7.2% | 61.3% | — |
-| 95% CI width ($\lambda$) | 0.0013 | 0.0133 | **10x** |
-| $\hat{R}$ (log_rate) | 1.004 | 1.002 | Both converged |
-| Reporting rate recovery | 0.1003 | — | Near-zero bias |
+| Param | Estimated | True | Status |
+|:------|:---------:|:----:|:------:|
+| $\alpha$ | -0.66 | 0.0 | biased |
+| $\gamma$ | 0.15 | 0.10 | biased |
+| $\sigma^2$ | 0.79 | 0.36 | overest. |
+| $\phi$ | 1.53 | 3.0 | underest. |
+| $\theta$ (AR1) | **0.73** | **0.75** | good |
+
+</div>
+<div class="mt-1 font-bold text-green-600">&lt;1% bad HMC transitions</div>
+</div>
+
+<div class="p-3 rounded-lg bg-blue-50 text-center border border-blue-300">
+<div class="text-xl font-bold text-blue-700">I*=0 (Standard Geostatistical)</div>
+<div class="text-xs mt-1">log(I) = α + ε</div>
+<div class="mt-2 text-xs">
+
+| Param | Estimated | True | Status |
+|:------|:---------:|:----:|:------:|
+| $\alpha$ | -2.16 | — | much lower |
+| $\gamma$ | 0.12 | — | similar |
+| $\sigma^2$ | **3.69** | 0.36 | 5x larger |
+| $\phi$ | 1.24 | 3.0 | underest. |
+| $\theta$ (AR1) | 0.61 | 0.75 | lower |
+
+</div>
+<div class="mt-1 font-bold text-amber-600">11% bad transitions (warmup)</div>
+</div>
+
+</div>
+
+<div class="mt-3 p-2 bg-gray-50 text-xs rounded-lg">
+
+**Key finding:** WITHOUT offset needs 5x more GP variance ($\sigma^2$ = 3.69 vs 0.79) — confirming that I\* provides spatial structure the GP would otherwise have to learn alone. AR(1) temporal correlation $\theta$ recovers well in the WITH model. **Open questions:** alpha and phi are not recovering true values — see diagnostics slide.
 
 </div>
 
 <!--
-Here are the key results from the simulation-estimation validation. The headline number is 88% RMSE improvement when using the mechanistic offset compared to the standard model without it.
+These are the actual numbers from our most recent run — 10 sites, 49 time steps, 1000 MCMC samples with 500 warmup, 2 chains.
 
-The WITH offset model achieves an RMSE of 14.7, which is only 7.2% of the mean observed case count. Without the offset, the RMSE balloons to 125.5 — more than 61% of the mean.
+The WITH model recovers AR(1) temporal correlation well — theta is 0.73 versus the true 0.75. But alpha is biased at -0.66 instead of 0, and gamma is 0.15 instead of 0.10. These are trading off along the alpha-gamma ridge we saw in the previous slide. Phi (spatial lengthscale) is estimated at 1.53 versus the true 3.0 — we'll discuss why in the diagnostics.
 
-Critically, the reporting rate is recovered almost exactly. The true value was 0.1, and we estimated 0.1003 — essentially zero bias. This validates the entire two-stage framework: Stage 1 correctly encodes transmission dynamics, and Stage 2 correctly recovers the scaling between mechanistic predictions and observed data.
+The WITHOUT model — I-star equals zero, which is the standard geostatistical approach — needs five times more GP variance. Sigma-squared jumps from 0.79 to 3.69 because without the mechanistic offset, the GP has to absorb all the spatial variation that I-star would have explained. It also has 11% bad HMC transitions during warmup compared to less than 1% for the WITH model.
 
-The precision difference is also striking — the credible interval for the reporting rate is 10 times tighter with the mechanistic offset. This makes biological sense: when you tell the model the shape of the transmission curve, it only needs to estimate the scale, so uncertainty is dramatically reduced.
+This confirms the hypothesis: including the mechanistic prediction provides valuable spatial structure. But there are convergence issues to address before this is a convincing result.
 -->

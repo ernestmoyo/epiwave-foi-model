@@ -29,7 +29,7 @@ class: text-left
 </div>
 
 <div class="footer-bar">
-<span>3/5/2026</span>
+<span>30/3/2026</span>
 <span style="font-style: italic;">Integrating Spatial Data on Malaria Vectors into Malaria Risk Mapping Approaches</span>
 <span>15</span>
 </div>

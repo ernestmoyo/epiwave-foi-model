@@ -20,7 +20,8 @@
 10. [Reproducibility](#reproducibility)
 11. [Troubleshooting](#troubleshooting)
 12. [References and Resources](#references-and-resources)
-13. [Appendix](#appendix)
+13. [Model Walkthrough: Baseline Results](#model-walkthrough-baseline-results-2026-03-29)
+14. [Appendix](#appendix)
 
 ---
 
@@ -36,12 +37,13 @@ Traditional mechanistic disease models face a fundamental computational bottlene
 
 1. Uses external data sources (Vector Atlas) to specify vector parameters as **fixed inputs** rather than inferring them
 2. Solves transmission dynamics **once per location** (not at every MCMC iteration)
-3. Uses mechanistic predictions as **offsets** in a Negative Binomial likelihood model
-4. Achieves **17x computational speedup** while maintaining interpretability and flexibility
+3. Uses mechanistic predictions as **log-offsets** in a Gaussian Process model with dual likelihood
+4. Models spatially-correlated residuals between mechanistic prediction and observed data via GP
+5. Simultaneously fits to **case counts** (Poisson) and **prevalence surveys** (Binomial)
 
 ## Operational Impact
 
-- **Scalability:** National-scale mapping feasible in 1-2 hours (vs. 35+ hours for joint inference)
+- **Spatial mapping:** GP captures where the mechanistic model is wrong, producing corrected risk maps
 - **Interpretability:** Parameters retain biological meaning (m = mosquitoes, not abstract coefficients)
 - **Flexibility:** Can generate intervention counterfactuals by re-running Stage 1 only
 - **Modularity:** Update vector data without re-running statistical inference
@@ -68,8 +70,8 @@ Traditional mechanistic disease models face a fundamental computational bottlene
               │                               │
               │                               │
     ┌─────────┴─────────┐         ┌──────────┴──────────┐
-    │ • Vector Atlas    │         │ • Offset Model      │
-    │ • Temperature     │         │ • NegBin Likelihood  │
+    │ • Vector Atlas    │         │ • GP Residuals       │
+    │ • Temperature     │         │ • Dual Likelihood    │
     │ • Interventions   │         │ • MCMC (HMC)        │
     │ • ODE Solver      │         │ • Uncertainty       │
     └───────────────────┘         └─────────────────────┘
@@ -90,8 +92,10 @@ Traditional mechanistic disease models face a fundamental computational bottlene
 |-----------|------------|---------|
 | **ODE Solving** | `deSolve` (R) | Fast, adaptive Runge-Kutta solver for Ross-Macdonald equations |
 | **Bayesian Inference** | `greta` (R) | Bayesian workflow with TensorFlow backend |
+| **GP Kernels** | `greta.gp` (R) | Gaussian Process kernels and sparse approximations |
 | **Data Manipulation** | `tidyverse` (R) | Data wrangling, tidying, and transformation |
 | **Visualization** | `ggplot2` (R) | Publication-quality graphics |
+| **GP Simulation** | `MASS` (R) | `mvrnorm()` for simulating true GP residuals |
 | **Version Control** | Git/GitHub | Code management and collaboration |
 
 ## Design Principles
@@ -122,8 +126,14 @@ Traditional mechanistic disease models face a fundamental computational bottlene
 | $r$ | Human recovery rate (per day) | Fixed | $(0, \infty)$ |
 | $I^*_{t,s}$ | Mechanistic incidence prediction | Derived | $[0, \infty)$ |
 | $C_{t,s}$ | Observed cases | Data | $\mathbb{Z}_{\geq 0}$ |
-| $\lambda$ | Log reporting rate | Parameter | $(-\infty, \infty)$ |
-| $\text{size}$ | NegBin overdispersion | Parameter | $(0, \infty)$ |
+| $Y_{t,s}$ | Prevalence survey positives | Data | $\mathbb{Z}_{\geq 0}$ |
+| $N_{t,s}$ | Prevalence survey sample size | Data | $\mathbb{Z}_{> 0}$ |
+| $\alpha$ | Intercept (log-scale) | Parameter | $(-\infty, \infty)$ |
+| $\gamma$ | Reporting/case ascertainment rate | Parameter | $(0, \infty)$ |
+| $\varepsilon_{t,s}$ | GP residual | Latent | $(-\infty, \infty)$ |
+| $\sigma^2$ | GP marginal variance | Hyperparameter | $(0, \infty)$ |
+| $\phi$ | Spatial lengthscale | Hyperparameter | $(0, \infty)$ |
+| $\theta$ | Temporal lengthscale | Hyperparameter | $(0, \infty)$ |
 
 ## Stage 1: Mechanistic Model
 
@@ -191,48 +201,64 @@ Where:
 - **Contact mortality** ($\rho^g$): ITNs increase $g$ by killing mosquitoes attempting to bite
 - **Resistance** ($u$): Reduces all intervention effects proportionally
 
-## Stage 2: Negative Binomial Offset Model
+## Stage 2: GP + Dual Likelihood
 
 ### Model Specification
 
-**Linear predictor:**
+**Latent infection incidence:**
 $$
-\log(\mu_{s,t}) = \lambda + \log(I^*_{s,t})
+I_{s,t} = \exp\left(\alpha + \log(I^*_{s,t}) + \varepsilon_{s,t}\right)
 $$
 
 Where:
-- $\lambda$: Log reporting/scaling rate (captures under-reporting, symptomatic fraction)
-- $I^*_{s,t}$: Fixed mechanistic prediction from Stage 1 (used as offset)
+- $\alpha$: Intercept (log-scale systematic adjustment to mechanistic prediction)
+- $I^*_{s,t}$: Fixed mechanistic prediction from Stage 1 (used as log-offset)
+- $\varepsilon_{s,t}$: Spatially-correlated residual from GP
 
-### Observation Model
-
-**Case counts:**
+**GP prior on residuals:**
 $$
-C_{s,t} \sim \text{NegBin}(\text{size},\; p_{s,t})
-$$
-
-Where $p_{s,t} = \frac{\text{size}}{\text{size} + \mu_{s,t}}$.
-
-The Negative Binomial naturally handles overdispersion in case counts. When $\text{size} \to \infty$, the NegBin converges to a Poisson — so the model can recover near-Poisson behaviour when the mechanistic prediction is accurate.
-
-### Parameter Non-Identifiability Resolution
-
-An earlier formulation used separate intercept ($\alpha$) and reporting rate ($\gamma$) parameters:
-
-$$
-\log(\mu_{s,t}) = \alpha + \log(\gamma) + \log(I^*_{s,t})
+\varepsilon \sim \text{GP}(0, K), \quad K = \sigma^2 \cdot K_{\text{space}}(\lVert \cdot \rVert; \phi) \cdot K_{\text{time}}(|\cdot|; \theta)
 $$
 
-Since $\alpha$ and $\log(\gamma)$ are both additive constants on the log scale, they are **non-identifiable** — only their sum $\lambda = \alpha + \log(\gamma)$ can be estimated from data. The current implementation uses a single merged parameter $\lambda$ (called `log_rate` in code).
+The kernel is **separable**: Matern 5/2 for space × Exponential for time. This matches the epiwave.mapping design and avoids conditioning issues from joint kernels.
+
+### Dual Likelihood
+
+**Case counts (Poisson):**
+$$
+C_{s,t} \sim \text{Poisson}(\gamma \cdot I_{s,t})
+$$
+
+**Prevalence surveys (Binomial):**
+$$
+Y_{s,t} \sim \text{Binomial}(N_{s,t},\; x_{s,t})
+$$
+
+Where $x_{s,t}$ is the ODE human prevalence adjusted by the GP residual.
+
+### Why Dual Likelihood is Required
+
+With case counts only, $\alpha$ (average infection incidence) and $\gamma$ (reporting rate) are **non-identifiable** — they form a ridge in posterior space where $\exp(\alpha) \times \gamma$ is constant. Adding prevalence surveys breaks this because parasite rate surveys are unaffected by case ascertainment, providing independent information about infection incidence.
+
+### Why the GP is Required
+
+The GP models spatially-correlated departures from the mechanistic prediction $I^*$. Without the GP, the model assumes $I^*$ perfectly explains spatial variation — which it does not. The GP captures where and when the mechanistic model is wrong, producing corrected risk maps.
+
+A Negative Binomial likelihood was previously tried (v4) but rejected by the supervisor: it moves spatially-correlated error into the sampling model, preventing spatial mapping of residuals.
 
 ### Prior Distributions
 
 | Parameter | Prior | Rationale |
 |-----------|-------|-----------|
-| $\lambda$ (`log_rate`) | $\mathcal{N}(-2, 1)$ | Centres on ~10% reporting rate; $e^{-2} \approx 0.135$ |
-| $\log(\text{size})$ (`log_size`) | $\mathcal{N}(3, 1)$ | Median size ~20; 95% CI from ~1 to ~400 |
+| $\alpha$ | $\mathcal{N}(0, 1)$ | No systematic bias expected a priori |
+| $\gamma$ | $\mathcal{N}(0.1, 0.05)$, truncated > 0 | Literature-informed reporting rate |
+| $\log(\sigma^2)$ (`log_sigma`) | $\mathcal{N}(-1, 1)$ | Moderate GP variance |
+| $\log(\phi)$ (`log_phi`) | $\mathcal{N}(1, 1)$ | Spatial lengthscale on log scale |
+| $\log(\theta)$ (`log_theta`) | $\mathcal{N}(1, 1)$ | Temporal lengthscale on log scale |
 
-**Reparameterisation note:** An earlier version used $\phi \sim \text{Beta}(1, 9)$ for overdispersion, which caused boundary sampling issues (ESS = 82). Reparameterising to $\log(\text{size}) \sim \mathcal{N}(3, 1)$ resolved this (ESS = 489).
+### GP Scalability
+
+For computational tractability, sparse GP approximations with inducing points are used via `greta.gp::gp(..., inducing = ...)`. Block-Circulant Embedding (BCB) via FFT is available for larger problems (as in epiwave.mapping).
 
 ---
 
@@ -243,8 +269,9 @@ Since $\alpha$ and $\log(\gamma)$ are both additive constants on the log scale, 
 ```
 epiwave-foi-model/
 ├── R/
-│   ├── epiwave-foi-model.R       # Main implementation (~580 lines, 11 functions)
+│   ├── epiwave-foi-model.R       # Main implementation (GP + dual likelihood)
 │   ├── archive/                   # Previous versions
+│   │   └── walkthrough_scripts/  # Step-by-step execution scripts (2026-03-29)
 │   ├── experiments/              # Alternative implementations
 │   │   ├── tf_ode_test.R         # TensorFlow ODE solver
 │   │   ├── greta_rm_ode_op.R     # Greta ODE operation
@@ -360,42 +387,48 @@ For each site s:
 
 ### Stage 2: Statistical Inference
 
-#### `fit_epiwave_with_offset(observed_cases, I_star, use_mechanistic = TRUE)`
+#### `fit_epiwave_gp(observed_cases, I_star, x_star, coords, prev_data, ...)`
 
-**Purpose:** Define Negative Binomial model with mechanistic offset for Bayesian inference via greta.
+**Purpose:** Define GP + dual likelihood model with mechanistic offset for Bayesian inference via greta/greta.gp.
+
+> **Note:** The previous function `fit_epiwave_with_offset()` used a NegBin likelihood and has been renamed to `fit_epiwave_negbin()` (kept as deprecated legacy for comparison only).
 
 **Inputs:**
 - `observed_cases`: Matrix `[n_times x n_sites]` of case counts
 - `I_star`: Matrix `[n_times x n_sites]` of mechanistic predictions
+- `x_star`: Matrix `[n_times x n_sites]` of ODE human prevalence
+- `coords`: Matrix `[n_obs x 3]` of (lon, lat, time_normalised) coordinates
+- `prev_data`: List from `simulate_prevalence_surveys()` (NULL for case-only)
 - `use_mechanistic`: Logical — include mechanistic offset?
+- `inducing`: Optional matrix of inducing point coordinates for sparse GP
 
 **Output:** `greta` model object (ready for `greta::mcmc()`)
 
 **Model Construction:**
 ```r
-fit_epiwave_with_offset <- function(observed_cases, I_star, use_mechanistic = TRUE) {
-  library(greta)
-  cases_vec  <- as.vector(observed_cases)
-  I_star_vec <- as.vector(I_star)
+fit_epiwave_gp <- function(observed_cases, I_star, x_star, coords, prev_data, ...) {
+  library(greta); library(greta.gp)
 
-  # Priors (only 2 free parameters)
-  log_rate <- normal(-2, 1)
-  log_size <- normal(3, 1)
-  size     <- exp(log_size)
+  # Priors (5 free parameters)
+  alpha     <- normal(0, 1)
+  gamma     <- normal(0.1, 0.05, truncation = c(0.001, Inf))
+  log_sigma <- normal(-1, 1);  sigma2 <- exp(log_sigma)
+  log_phi   <- normal(1, 1);   phi    <- exp(log_phi)
+  log_theta <- normal(1, 1);   theta  <- exp(log_theta)
 
-  # Linear predictor with mechanistic offset
-  if (use_mechanistic) {
-    log_mu <- log_rate + log(I_star_vec + 1e-10)
-  } else {
-    log_mu <- log_rate
-  }
-  mu   <- exp(log_mu)
-  prob <- size / (size + mu)
+  # Separable GP kernel: Matern 5/2 (space) x Exponential (time)
+  K <- build_gp_kernel(sigma2, phi, theta)
+  epsilon <- gp(as_data(coords), K, inducing = inducing, tol = 1e-3)
 
-  # Likelihood
-  distribution(cases_vec) <- negative_binomial(size, prob)
+  # Latent incidence with GP residuals
+  log_I <- alpha + log(I_star_vec + 1e-10) + epsilon
+  I_latent <- exp(log_I)
 
-  model(log_rate, log_size)
+  # Dual likelihood
+  distribution(cases_vec) <- poisson(gamma * I_latent)
+  distribution(prev_data$n_positive) <- binomial(prev_data$n_tested, prev_prob)
+
+  model(alpha, gamma, log_sigma, log_phi, log_theta)
 }
 ```
 
@@ -403,7 +436,7 @@ fit_epiwave_with_offset <- function(observed_cases, I_star, use_mechanistic = TR
 
 #### `simulate_and_estimate(n_sites, n_times, run_mcmc, ...)`
 
-**Purpose:** Generate synthetic data and fit competing models for validation.
+**Purpose:** Generate synthetic data with GP residuals and fit competing models for validation.
 
 **Workflow:**
 1. **Generate truth:**
@@ -411,45 +444,43 @@ fit_epiwave_with_offset <- function(observed_cases, I_star, use_mechanistic = TR
    - Apply ITN scale-up
    - Solve ODEs → true $x, z$
    - Compute true $I^*$
-   - Generate cases $\sim \text{NegBin}(\text{size}, p)$ with known reporting rate
+   - Simulate true GP residuals $\varepsilon_{\text{true}}$ via `MASS::mvrnorm()`
+   - Generate cases $\sim \text{Poisson}(\gamma \cdot \exp(\alpha + \log(I^*) + \varepsilon))$
+   - Generate prevalence surveys $\sim \text{Binomial}(N, x \cdot \exp(\varepsilon))$
 
-2. **Fit models:**
-   - **Model A (WITH offset):** `fit_epiwave_with_offset(cases, I_star, use_mechanistic = TRUE)`
-   - **Model B (WITHOUT offset):** `fit_epiwave_with_offset(cases, I_star, use_mechanistic = FALSE)`
+2. **Fit models (three-way comparison):**
+   - **GP+offset:** `fit_epiwave_gp(cases, I_star, ..., use_mechanistic = TRUE)`
+   - **GP-only:** `fit_epiwave_gp(cases, I_star, ..., use_mechanistic = FALSE)`
+   - **NegBin (legacy):** `fit_epiwave_negbin(cases, I_star)` for comparison
 
 3. **Run MCMC** (if `run_mcmc = TRUE`):
-   - 4 chains, 1000 samples each, 500 warmup
+   - 2 chains, 1000 samples each, 500 warmup
    - Extract posterior summaries and performance metrics
 
 4. **Generate 5 diagnostic plots:**
-   - p1: Mechanistic prediction vs observed cases
-   - p2: Posterior trace plots
-   - p3: WITH vs WITHOUT offset comparison
-   - p4: Residual analysis
-   - p5: Posterior density plots
+   - p1: Stage 1 vs true incidence (showing gap = GP residuals)
+   - p2: True GP residual heatmap (site x time)
+   - p3: Alpha-gamma joint posterior (cluster vs ridge)
+   - p4: GP hyperparameter posteriors (sigma, phi, theta)
+   - p5: Posterior predictive check (GP+offset vs NegBin)
 
 #### `extract_posterior_summary(draws)` and `compute_performance_metrics(draws, true_values)`
 
 **Purpose:** Post-processing of MCMC output for reporting and comparison.
 
-### Observed Validation Results
+### Validation Results
 
-From the simulation-estimation study (10 sites, 48 months):
+> **Note:** The results below are from the previous NegBin model (v4) and are retained for historical reference. Updated GP + dual likelihood results will replace these once the new model is validated.
+
+**Previous NegBin results (10 sites, 48 months) — HISTORICAL:**
 
 | Metric | WITH Offset | WITHOUT Offset |
 |--------|-------------|----------------|
 | **RMSE** | 0.070 | 0.586 |
 | **RMSE Improvement** | **88%** | — |
 | **Reporting rate** | 0.1003 (true: 0.10) | — |
-| **NegBin size** | ~240 (near-Poisson) | ~1.8 (heavy overdispersion) |
-| **95% CI width** | 0.0013 | 0.0133 |
 
-**MCMC Convergence (WITH offset model):**
-
-| Parameter | Mean | SD | R-hat | ESS (bulk) |
-|-----------|------|-----|-------|------------|
-| `log_rate` | -2.30 | 0.020 | 1.004 | 1095 |
-| `log_size` | 5.49 | 0.404 | 1.004 | 489 |
+**GP + dual likelihood validation:** Pending — three-way comparison (GP+offset vs GP-only vs NegBin) in progress.
 
 ---
 
@@ -587,12 +618,12 @@ I_star <- compute_mechanistic_prediction(
   population_matrix = population
 )
 
-# Step 5: Fit NegBin model with mechanistic offset
-# model_with <- fit_epiwave_with_offset(observed_cases, I_star, use_mechanistic = TRUE)
-# model_without <- fit_epiwave_with_offset(observed_cases, I_star, use_mechanistic = FALSE)
+# Step 5: Fit GP model with mechanistic offset and dual likelihood
+# model_gp <- fit_epiwave_gp(observed_cases, I_star, x_star = ode_solution$x,
+#                             coords = coords, prev_data = prev_data,
+#                             use_mechanistic = TRUE, inducing = inducing)
 #
-# draws_with <- greta::mcmc(model_with, n_samples = 1000, warmup = 500, chains = 4)
-# draws_without <- greta::mcmc(model_without, n_samples = 1000, warmup = 500, chains = 4)
+# draws_gp <- greta::mcmc(model_gp, n_samples = 1000, warmup = 500, chains = 2)
 ```
 
 ## Running Simulation Study
@@ -660,21 +691,23 @@ scenario_comparison <- data.frame(
 - Single site, 4 years: ~0.5 seconds
 - 500 sites, 4 years: ~1 minute (parallelized)
 
-### Stage 2: Negative Binomial Model
+### Stage 2: GP + Dual Likelihood
 
-**Per-iteration complexity:** $O(N)$ — linear in observations (no covariance matrix)
+**Per-iteration complexity:** Depends on GP approximation:
+- **Full GP:** $O(N^3)$ — Cholesky decomposition of $N \times N$ covariance matrix
+- **Sparse GP (inducing points):** $O(N \cdot M^2)$ where $M$ = number of inducing points
+- **BCB (FFT):** $O(N \log N)$ — linear scaling (as in epiwave.mapping)
 
-- $N = S \times T$: Total observations
-- Only 2 free parameters (log_rate, log_size) regardless of data size
+Parameters: 5 free (alpha, gamma, log_sigma, log_phi, log_theta) + GP latent variables
 
-**Total MCMC time:** Depends on:
-- Number of iterations (typically 1,000-4,000)
-- Number of chains (typically 4)
-- Effective sample size requirements
+**Total MCMC time:** Slower than the previous NegBin model due to GP overhead. Depends on:
+- Number of observations $N = S \times T$
+- GP approximation method and number of inducing points
+- Number of iterations and chains
 
-**Benchmark:**
-- 10 sites x 48 months, 4 chains x 1000 samples: ~2-5 minutes
-- 100 sites x 48 months, 4 chains x 1000 samples: ~10-15 minutes
+**Benchmark (sparse GP, ~25 inducing points):**
+- 3 sites x 12 months, 2 chains x 500 samples: ~1-3 minutes
+- 10 sites x 48 months, 2 chains x 1000 samples: ~5-20 minutes
 
 ## Comparison to Joint Inference
 
@@ -719,13 +752,13 @@ FOI_total <- (m_gambiae * a_gambiae * b * z_gambiae) +
 
 ### 3. Spatial Covariates in Stage 2
 
-**Current:** NegBin with mechanistic offset only (no spatial residual structure)
+**Current:** GP residuals with mechanistic offset
 
-**Extension:** Add environmental covariates $X$ and/or spatial random effects
+**Extension:** Add environmental covariates $X$ to the GP mean function
 
 **Modified linear predictor:**
 $$
-\log(\mu_{s,t}) = \lambda + \log I^*_{s,t} + X_{s,t}^\top \beta
+\log(I_{s,t}) = \alpha + \log I^*_{s,t} + X_{s,t}^\top \beta + \varepsilon_{s,t}
 $$
 
 ### 4. Non-Stationary Seasonality
@@ -814,16 +847,18 @@ coda::traceplot(draws)
 coda::autocorr.plot(draws)
 ```
 
-### NegBin Model Diagnostics
+### GP Model Diagnostics
 
 **Check:**
-1. `log_rate` posterior centres near expected reporting rate?
-2. `size` parameter: large = near-Poisson (good mechanistic fit), small = heavy overdispersion
-3. Residual patterns across sites and time?
+1. α posterior: does the intercept centre near expected log-scale adjustment?
+2. γ posterior: does reporting rate concentrate near true value (identifiable via prevalence data)?
+3. GP variance σ²: small = mechanistic model explains most variation; large = significant residual structure
+4. Lengthscales φ, θ: are spatial/temporal correlation ranges plausible?
+5. GP residual surface: does it show interpretable spatial structure?
 
 **Interpretation:**
-- WITH offset: size ~ 240 (near-Poisson) → mechanistic model captures most variation
-- WITHOUT offset: size ~ 1.8 (heavy overdispersion) → model struggles without mechanistic structure
+- WITH offset: GP residuals should be small (σ² near 0) → mechanistic model captures most variation
+- WITHOUT offset: GP must absorb all spatial structure → larger σ², wider credible intervals
 
 ---
 
@@ -913,14 +948,17 @@ solution <- ode(..., method = "bdf")  # For stiff systems
 **Solutions:**
 ```r
 # Current priors (tuned for good convergence)
-log_rate <- normal(-2, 1)   # Log reporting rate
-log_size <- normal(3, 1)    # Log overdispersion (reparameterised)
+alpha     <- normal(0, 1)           # Log-scale intercept
+gamma     <- normal(0.1, 0.05, truncation = c(0.001, Inf))  # Reporting rate
+log_sigma <- normal(-1, 1)          # Log GP variance
+log_phi   <- normal(1, 1)           # Log spatial lengthscale
+log_theta <- normal(1, 1)           # Log temporal lengthscale
 
 # If ESS is low, try more samples
 draws <- mcmc(model, n_samples = 2000, warmup = 1000, chains = 4)
 
-# Check: if size posterior is very large (>100), model is near-Poisson
-# This is expected when mechanistic prediction is accurate
+# Check: if GP variance posterior is very small, mechanistic model fits well
+# This is expected when I* accurately captures spatial variation
 ```
 
 ### Issue 3: greta/TensorFlow Setup
@@ -977,6 +1015,87 @@ This is by design — it demonstrates the value of the mechanistic offset. The W
 
 ---
 
+# Model Walkthrough: Baseline Results (2026-03-29)
+
+This section documents the step-by-step execution of the full pipeline (Stage 1 + Stage 2 MCMC) and the diagnostic findings. It serves as a baseline before any convergence improvements.
+
+## Stage 1 Outputs
+
+Configuration: 10 sites, 49 time points (0–1440 days, monthly), ITN scale-up 0–70%, resistance index 0.2.
+
+| Quantity | Range | Notes |
+|----------|-------|-------|
+| m (mosquito ratio) | 0.42 – 3.16 | Seasonal + ITN-reduced |
+| a (biting rate) | 0.25 – 0.30 | ITN feeding inhibition |
+| g (mortality rate) | 0.10 – 0.117 | ITN mortality boost |
+| x (human prevalence) | 0.01 – 0.765 | ODE equilibrium |
+| z (mosquito prevalence) | 0.001 – 0.640 | ODE equilibrium |
+| I* (mechanistic rate) | 0.0004 – 0.468 | m × a × b × z (RATE, not count) |
+
+Stage 1 solves in ~0.8 seconds for 10 sites. ODE is solved once — not at every MCMC iteration.
+
+## Stage 1 Diagnostic Plot: Two-Panel Design
+
+The original single-panel plot mixed rates (I\*, ~0–0.47) with case counts (~0–1850) on the same y-axis, making I\* invisible. Replaced with a two-panel layout:
+
+- **Top panel (Rate Space):** I\* (mechanistic) vs I_true (with GP residuals) on the same scale. Shows exactly what the GP does — exp(epsilon) distorts I\* by 0.14× to 12×.
+- **Bottom panel (Count Space):** Expected cases (gamma × I_true × N) vs observed (Poisson draws). Shows the data Stage 2 actually fits to.
+
+This separates the modelling question (can the GP recover the gap?) from the data (what does the model see?).
+
+## GP Residual Structure (True)
+
+True GP parameters: sigma = 0.6, phi = 3.0, rho = 0.75.
+
+- epsilon range: -1.99 to 2.50, mean ≈ 0, SD ≈ 1.02
+- Heatmap shows clear spatial correlation (nearby sites share colours) and temporal persistence (AR(1) with rho=0.75)
+- 147 prevalence surveys generated (30% of 490 site-time pairs)
+
+## Stage 2 MCMC Results (Baseline)
+
+Settings: 1000 samples, 500 warmup, 2 chains, sparse GP with 25 inducing points.
+
+### GP+offset model (<1% bad transitions, 52 seconds)
+
+| Parameter | True | Posterior Median | Status |
+|-----------|------|-----------------|--------|
+| alpha | 0.0 | -0.663 | Biased low |
+| gamma_rr | 0.1 | 0.153 | Biased high |
+| sigma² | 0.36 | 0.789 | Overestimated |
+| phi | 3.0 | 1.533 | Underestimated |
+| theta (rho) | 0.75 | 0.727 | Recovered well |
+
+### GP-only model (11% bad transitions during warmup, 53 seconds)
+
+| Parameter | Posterior Median | vs GP+offset |
+|-----------|-----------------|--------------|
+| alpha | -2.159 | Much lower (no offset anchor) |
+| gamma_rr | 0.119 | Similar |
+| sigma² | 3.685 | ~5× larger — GP absorbs all spatial variation |
+| phi | 1.244 | Shorter lengthscale |
+| theta | 0.613 | Lower temporal correlation |
+
+### Key Diagnostic Findings
+
+1. **Alpha-gamma ridge (Plot 3):** Clear negative correlation between alpha and gamma in the joint posterior. The dual likelihood (prevalence data) should break this ridge, but 147 surveys across 490 site-time combinations may be insufficient. The posterior does not reach the true values (alpha=0, gamma=0.1).
+
+2. **Multimodal GP hyperparameters (Plot 4):** phi concentrates around 1.2–1.5 but the true value is 3.0. sigma² and theta show multiple modes. Indicates chains have not fully converged with 1000 samples.
+
+3. **Posterior predictive undershoot (Plot 5):** GP+offset prediction captures the general shape but underestimates peaks, consistent with alpha bias pulling predictions down.
+
+4. **GP-only model confirms the framework:** Without the mechanistic offset, GP variance explodes (0.79 → 3.69) because it must explain everything the ODE would have captured. This is the expected behaviour and demonstrates the value of including I\*.
+
+### Issues to Address
+
+- Alpha-gamma non-identifiability ridge persists despite dual likelihood
+- GP hyperparameters (phi, sigma²) not recovering true values
+- Multimodal posteriors suggest insufficient sampling or poorly-tuned priors
+- Need more warmup/samples or structural changes to achieve convergence
+
+Output plots saved in `outputs/plot1_twopanel.png` through `outputs/plot5_posterior_pred.png`.
+
+---
+
 # Appendix
 
 ## A. Parameter Values
@@ -1004,8 +1123,11 @@ This is by design — it demonstrates the value of the mechanistic offset. The W
 
 | Parameter | Code Name | Prior | Interpretation |
 |-----------|-----------|-------|----------------|
-| $\lambda$ | `log_rate` | $\mathcal{N}(-2, 1)$ | Log reporting rate; $e^{-2} \approx 0.135$ |
-| $\log(\text{size})$ | `log_size` | $\mathcal{N}(3, 1)$ | Overdispersion; median size ~20 |
+| $\alpha$ | `alpha` | $\mathcal{N}(0, 1)$ | Log-scale intercept adjusting mechanistic prediction |
+| $\gamma$ | `gamma` | $\mathcal{N}(0.1, 0.05)$, truncated $> 0$ | Reporting/case ascertainment rate |
+| $\log(\sigma^2)$ | `log_sigma` | $\mathcal{N}(-1, 1)$ | GP marginal variance (log scale) |
+| $\log(\phi)$ | `log_phi` | $\mathcal{N}(1, 1)$ | Spatial lengthscale, Matérn 5/2 |
+| $\log(\theta)$ | `log_theta` | $\mathcal{N}(1, 1)$ | Temporal lengthscale, Exponential |
 
 ## B. Computational Requirements
 
@@ -1025,16 +1147,17 @@ This is by design — it demonstrates the value of the mechanistic offset. The W
 
 ## C. Stage 2 Evolution History
 
-The current NegBin model is the result of iterative development:
+The current GP + dual likelihood model is the result of iterative development:
 
 | Version | Approach | Outcome |
 |---------|----------|---------|
-| v1 | Joint GP (5+ params) | Non-identifiable, failed to converge |
-| v2 | Separable GP | Better but still non-identifiable |
-| v3 | Hierarchical random effects | Acceptance rate ~0% |
-| **v4** | **NegBin with offset (2 params)** | **90%+ acceptance, ESS > 400** |
+| v1 | Joint GP (single RBF kernel) | 490×490 Cholesky near-singular, 0% acceptance |
+| v2 | Separable GP (additive kernels) | Ill-conditioned, slow mixing |
+| v3 | Hierarchical random effects | α/γ non-identifiable (case-only data) |
+| v4 | NegBin with offset (2 params) | Converged but cannot model spatial residuals |
+| **v5** | **GP + dual likelihood (5 params)** | **Current — separable kernel, sparse GP, Poisson+Binomial** |
 
-The key insight was that the mechanistic offset already captures the structured variation, so the residual model only needs to handle overdispersion — not spatial-temporal correlation.
+Key lessons incorporated into v5: sparse GP with inducing points (avoids v1/v2 Cholesky issues), dual likelihood with prevalence data (resolves v3 α/γ identifiability), separable Matérn 5/2 × Exponential kernel (following epiwave.mapping). The NegBin v4 was rejected by supervisor because it cannot capture spatially-correlated departures from the mechanistic model.
 
 ## D. Glossary
 
@@ -1042,7 +1165,8 @@ The key insight was that the mechanistic offset already captures the structured 
 |------|------------|
 | **Entomological inoculation rate (EIR)** | Number of infectious mosquito bites per person per unit time |
 | **Force of infection (FOI)** | Per-capita rate of infection in susceptible population |
-| **Negative Binomial (NegBin)** | Count distribution allowing overdispersion relative to Poisson |
+| **Gaussian Process (GP)** | Non-parametric prior over functions; models spatially-correlated residuals |
+| **Negative Binomial (NegBin)** | Count distribution allowing overdispersion relative to Poisson (used in deprecated v4) |
 | **HMC (Hamiltonian Monte Carlo)** | MCMC algorithm using gradient information |
 | **Identifiability** | Whether model parameters can be uniquely determined from data |
 | **Offset** | Fixed predictor term in regression model (coefficient = 1) |
@@ -1054,4 +1178,4 @@ The key insight was that the mechanistic offset already captures the structured 
 **End of Documentation**
 
 For questions or contributions, contact:
-**Ernest Moyo** | ernest.moyo@nm-aist.ac.tz | [GitHub](https://github.com/ernestmoyo/epiwave-foi-model)
+**Ernest Moyo** | moyoe@nm-aist.ac.tz | [GitHub](https://github.com/ernestmoyo/epiwave-foi-model)

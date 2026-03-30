@@ -2,69 +2,48 @@
 layout: default
 ---
 
-# Stage 2 Evolution: GP to Negative Binomial
+# Stage 2 Evolution: Learning from Each Iteration
 
-Three iterations of the residual structure, each solving the previous failure mode
+Six iterations — each failure taught us something, converging on the epiwave.mapping-aligned design
 
-<div class="grid grid-cols-4 gap-2 mt-4">
-
-<div class="p-2 rounded-lg bg-red-50 text-xs border border-red-300">
-
-### <span class="text-red-600">FAILED</span> v1
-**Joint GP**
-
-490 $\times$ 490 covariance matrix
-
-Cholesky decomposition singular
-
-<div class="mt-2 font-bold text-red-600 text-center">
-0% HMC acceptance
-</div>
-
-</div>
+<div class="grid grid-cols-3 gap-2 mt-4">
 
 <div class="p-2 rounded-lg bg-red-50 text-xs border border-red-300">
 
-### <span class="text-red-600">FAILED</span> v2
-**Separable GP**
+### <span class="text-red-600">v1–v3</span>
+**Early GP attempts**
 
-10 $\times$ 10 + 49 $\times$ 49
+v1: Joint 490x490 GP — Cholesky singular
 
-Fixed matrix size but 59-dim latent space
+v2: Additive separable — ill-conditioned
 
-<div class="mt-2 font-bold text-red-600 text-center">
-HMC couldn't tune
-</div>
+v3: Random effects — alpha/gamma non-identifiable
 
 </div>
 
 <div class="p-2 rounded-lg bg-red-50 text-xs border border-red-300">
 
-### <span class="text-red-600">FAILED</span> v3
-**Hierarchical RE**
+### <span class="text-red-600">v4–v5</span>
+**Wrong turns**
 
-Normal random effects, non-centred param.
+v4: NegBin, dropped GP — supervisor rejected (cannot model spatial residuals)
 
-Poisson + 59 params
-
-<div class="mt-2 font-bold text-red-600 text-center">
-Extreme gradients
-</div>
+v5: 3D product kernel GP — 100% bad HMC (250 latent vars)
 
 </div>
 
 <div class="p-2 rounded-lg bg-green-50 text-xs border border-green-400">
 
-### <span class="text-green-600">SUCCESS</span> v4
-**NegBin**
+### <span class="text-green-600">v6 — Current</span>
+**Spatial GP + AR(1)**
 
-2 parameters only
+Matches epiwave.mapping exactly
 
-Overdispersion absorbs residual variation
+I\* = rate (m*a*b*z), population in Poisson
 
-<div class="mt-2 font-bold text-green-600 text-center">
-90%+ acceptance
-</div>
+Dual likelihood, <1% bad transitions
+
+**Baseline run completed** — convergence issues diagnosed
 
 </div>
 
@@ -72,18 +51,12 @@ Overdispersion absorbs residual variation
 
 <div class="mt-3 p-3 bg-blue-50 text-sm rounded-lg border border-blue-200">
 
-**Key Insight:** The mechanistic offset already encodes spatial-temporal structure — the GP was re-learning what the ODE already provides
+**Key lessons:** Spatial GP + AR(1) from epiwave.mapping (fixes v1–v5 latent space), dual likelihood (addresses alpha/gamma identifiability), I\* as rate not count, WITH offset vs I\*=0 comparison as the core validation. Current work: diagnosing why alpha/gamma ridge persists and phi is underestimated.
 
 </div>
 
 <!--
-This slide tells the story of how we arrived at the Negative Binomial formulation. It wasn't the first thing we tried — we went through three failed iterations.
+Six iterations to get here. Versions 1-3 tried various GP approaches that failed computationally. Version 4 dropped the GP for a Negative Binomial approach — supervisor rejected it because it cannot model spatial residuals; it assumes I-star perfectly explains spatial variation. Version 5 used a 3D product kernel GP which was mathematically correct but computationally intractable — 100% bad HMC transitions because the latent space was too large.
 
-Version 1 tried a joint space-time GP with a full 490 by 490 covariance matrix for 10 sites times 49 months. The Cholesky decomposition was near-singular, giving 0% HMC acceptance regardless of tuning.
-
-Version 2 used a separable GP — a Kronecker product of a 10x10 spatial kernel and a 49x49 temporal kernel. This fixed the matrix size issue but created a 59-dimensional latent space that HMC simply couldn't navigate efficiently.
-
-Version 3 tried hierarchical random effects with non-centred parameterisation. Still 59 parameters, and the Poisson likelihood with extreme count data created gradient issues.
-
-The breakthrough was Version 4 — realising that the mechanistic offset already captures the spatial-temporal structure. The GP was trying to re-learn what the ODE already provides. A simple Negative Binomial with just 2 parameters gives 90%+ HMC acceptance.
+Version 6 — our current design — follows epiwave.mapping directly. Spatial GP innovations with AR(1) temporal correlation keeps the latent space at n_sites. We've completed a baseline simulation-estimation run. The pipeline works — less than 1% bad HMC transitions — but we have diagnosed specific convergence issues with alpha-gamma identifiability and the spatial lengthscale phi that we'll discuss next.
 -->

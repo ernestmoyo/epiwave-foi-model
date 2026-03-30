@@ -24,11 +24,32 @@
   box-sizing: border-box;
 }
 
-/* Consistent base font size for content slides */
+/* Consistent base font size for content slides — tuned for 16:9 widescreen */
 .slidev-layout p,
 .slidev-layout li {
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+/* Tighter code blocks */
+.slidev-layout pre,
+.slidev-layout code {
+  font-size: 0.65rem !important;
+  line-height: 1.3 !important;
+}
+
+/* Smaller h1 to save vertical space */
+.slidev-layout h1 {
+  font-size: 1.35rem !important;
+  margin-bottom: 0.2rem !important;
+}
+
+/* Compact tables */
+.slidev-layout table {
+  font-size: 0.7rem;
+}
+.slidev-layout th, .slidev-layout td {
+  padding: 2px 6px !important;
 }
 
 /* Override seriph theme heading colors */

@@ -4,7 +4,7 @@ layout: default
 
 # Code Architecture: `epiwave-foi-model.R`
 
-11 functions in ~580 lines — modular, two-stage pipeline
+15 functions — modular, two-stage pipeline with GP residuals and dual likelihood
 
 ```mermaid {scale: 0.45}
 graph LR
@@ -17,9 +17,11 @@ graph LR
         SOLVE --> CMP["compute_mechanistic_prediction()"]
     end
 
-    subgraph S2["STAGE 2: Bayesian Calibration"]
-        CMP -->|"I*(s,t)"| FIT["fit_epiwave_with_offset()"]
-        CASES["observed_cases"] --> FIT
+    subgraph S2["STAGE 2: GP + Dual Likelihood"]
+        CMP -->|"I*(s,t)"| FIT["fit_epiwave_gp()"]
+        CASES["Case counts"] --> FIT
+        PREV["Prevalence surveys"] --> FIT
+        BK["build_gp_kernel()"] -.-> FIT
         FIT --> MCMC["greta::mcmc()"]
     end
 
@@ -36,13 +38,13 @@ graph LR
 <div class="mt-1 text-xs grid grid-cols-3 gap-2">
 
 <div class="p-1 bg-blue-50 rounded text-center border border-blue-200">
-<strong>Stage 1</strong>: 6 functions<br/>
+<strong>Stage 1</strong>: 7 functions<br/>
 <code>deSolve</code> + <code>approxfun()</code>
 </div>
 
 <div class="p-1 bg-green-50 rounded text-center border border-green-200">
-<strong>Stage 2</strong>: 1 function<br/>
-<code>greta</code> / TensorFlow HMC
+<strong>Stage 2</strong>: 4 functions<br/>
+<code>greta</code> + <code>greta.gp</code> / TensorFlow HMC
 </div>
 
 <div class="p-1 bg-purple-50 rounded text-center border border-purple-200">
@@ -54,16 +56,16 @@ Sim-estimation + metrics
 
 <div class="mt-1 text-xs opacity-70 text-center">
 
-`simulate_and_estimate()` orchestrates the full pipeline: data generation, both MCMC models, and all 5 diagnostic plots
+`simulate_and_estimate()` orchestrates the full pipeline: data generation, model comparison (GP+offset vs I\*=0 standard geostatistical), and diagnostic plots
 
 </div>
 
 <!--
-This is the full architecture of our R implementation. The code is 580 lines total — deliberately compact.
+This is the full architecture of our R implementation — 15 functions total.
 
-Stage 1 has 6 functions. Three parameter generators — get_fixed_m, get_fixed_a, get_fixed_g — each produce time-by-site matrices from either Vector Atlas data or temperature-dependent defaults. These feed into apply_interventions, which adjusts m, a, and g based on ITN and IRS coverage. The adjusted parameters go to solve_ross_macdonald_multi_site, which calls ross_macdonald_ode internally via deSolve for each site. Finally, compute_mechanistic_prediction combines the ODE output with population data to produce I-star.
+Stage 1 has 7 functions. Three parameter generators — get_fixed_m, get_fixed_a, get_fixed_g — each produce time-by-site matrices from Vector Atlas data or temperature-dependent defaults. apply_interventions adjusts m, a, g for ITN/IRS. solve_ross_macdonald_multi_site solves the ODE per site. compute_mechanistic_prediction computes I* = m*a*b*z (infection incidence rate, no population).
 
-Stage 2 has just one core function — fit_epiwave_with_offset — which builds a greta model with the Negative Binomial likelihood and the mechanistic offset.
+Stage 2 has 5 functions. build_gp_kernel constructs the spatial Matern 5/2 kernel. ar1 applies AR(1) temporal correlation (ported from epiwave.mapping). simulate_gp_residuals and simulate_prevalence_surveys generate synthetic data. fit_epiwave_gp builds the GP model with dual Poisson plus Binomial likelihood. Population enters the Poisson likelihood, not I*.
 
-The validation layer has simulate_and_estimate as the orchestrator, plus two helper functions for posterior summaries and performance metrics.
+The validation layer has simulate_and_estimate as the orchestrator, plus extract_posterior_summary and compute_performance_metrics.
 -->

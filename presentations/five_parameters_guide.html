@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>The Five Parameters — EpiWave FOI Model</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="data:text/css,body{font-family:Segoe UI,sans-serif;max-width:800px;margin:auto;padding:2em;line-height:1.6;font-size:14px}h1{color:%233D2B1F;border-bottom:2px solid %23C8860A;padding-bottom:8px}h2{color:%233D2B1F;margin-top:2em}table{border-collapse:collapse;width:100%}th,td{border:1px solid %23ddd;padding:6px 10px;text-align:left}th{background:%23f5f5f5}code{background:%23f0f0f0;padding:1px 4px;border-radius:3px;font-size:13px}hr{border:none;border-top:1px solid %23C8860A;margin:2em 0}" />
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">The Five Parameters — EpiWave FOI Model</h1>
+</header>
+<h1 id="the-five-parameters-what-they-do-and-why-you-should-care">The
+Five Parameters: What They Do and Why You Should Care</h1>
+<p><strong>EpiWave FOI Model — Stage 2 Parameter Guide</strong> Ernest
+Moyo | NM-AIST / Vector Atlas | March 2026</p>
+<hr />
+<h2 id="the-setup">The Setup</h2>
+<p>Stage 2 of the EpiWave FOI model calibrates the mechanistic
+prediction I* (from Stage 1) to observed case counts and prevalence
+surveys. The structural equation is:</p>
+<pre><code>log(I_{s,t}) = alpha + log(I*_{s,t}) + epsilon_{s,t}
+
+Cases ~ Poisson(gamma * I_{s,t} * N_s)
+Prevalence ~ Binomial(N_tested, x_adjusted)</code></pre>
+<p>There are exactly <strong>5 free parameters</strong> estimated via
+MCMC (HMC in greta/TensorFlow). Everything else — the entomological
+parameters, the ODE solution, I* itself — is fixed from Stage 1.</p>
+<p>This document explains what each parameter controls, what its prior
+is, what happens if it’s wrong, and what questions to ask about it.</p>
+<hr />
+<h2 id="alpha-the-intercept">1. alpha — The Intercept</h2>
+<p><strong>What it does:</strong> alpha adjusts the overall level of
+infection incidence relative to the mechanistic prediction I*. It lives
+on the log scale.</p>
+<ul>
+<li>If alpha = 0: I* is perfectly calibrated. The mechanistic model gets
+the average incidence right.</li>
+<li>If alpha &gt; 0: true incidence is systematically higher than I*
+predicts.</li>
+<li>If alpha &lt; 0: true incidence is systematically lower than I*
+predicts.</li>
+</ul>
+<p><strong>Prior:</strong> Normal(0, 1) — centred at zero (no systematic
+bias), wide enough to allow substantial correction.</p>
+<p><strong>Why you should care:</strong> alpha tells you how well the
+mechanistic model (Stage 1) captures average transmission intensity. A
+large alpha means the entomological parameters from Vector Atlas are
+systematically off — maybe mosquito abundance is underestimated, or the
+ODE dynamics don’t capture some aspect of transmission. In a real
+application, alpha absorbs all the systematic errors in the mechanistic
+model.</p>
+<p><strong>What can go wrong:</strong> alpha is entangled with gamma
+(reporting rate) through the case count likelihood. For any constant k,
+shifting alpha up by k and multiplying gamma by exp(-k) gives the same
+expected case counts. This is the alpha-gamma non-identifiability
+problem. The prevalence likelihood is supposed to break this, because
+prevalence data informs alpha independently of gamma.</p>
+<p><strong>Current status:</strong> In our simulation (true alpha = 0),
+the posterior median is -0.66. This bias is linked to the alpha-gamma
+ridge — the two parameters are trading off.</p>
+<hr />
+<h2 id="gamma-gamma_rr-the-reporting-rate">2. gamma (gamma_rr) — The
+Reporting Rate</h2>
+<p><strong>What it does:</strong> gamma is the case ascertainment rate —
+the fraction of true infections that appear in the routine surveillance
+system as reported cases.</p>
+<ul>
+<li>gamma = 0.1 means 10% of infections are reported.</li>
+<li>gamma = 0.5 means half of infections are reported.</li>
+<li>gamma = 1.0 means perfect reporting (unrealistic for malaria).</li>
+</ul>
+<p><strong>Prior:</strong> Normal(0.1, 0.05), truncated above 0.001 —
+centred at 10% reporting, which is typical for malaria in sub-Saharan
+Africa.</p>
+<p><strong>Why you should care:</strong> gamma directly controls the
+scale of predicted case counts. If gamma is wrong, your case count
+predictions are wrong by a multiplicative factor. More importantly,
+gamma is what connects the biological model (infection incidence) to the
+operational data (reported cases). Knowing gamma separately from alpha
+means you can say “the mechanistic model is right about incidence, but
+only 10% of cases are reported” versus “the mechanistic model
+overestimates incidence.”</p>
+<p><strong>What can go wrong:</strong> gamma is non-identifiable with
+alpha from case data alone (see alpha above). The prevalence likelihood
+should resolve this because prevalence surveys measure actual infection
+in the population, completely independent of whether those infections
+get reported to the health system. But this requires sufficient
+prevalence data.</p>
+<p><strong>Current status:</strong> In our simulation (true gamma =
+0.1), the posterior median is 0.15. It’s trading off with alpha along
+the ridge.</p>
+<hr />
+<h2 id="sigma-squared-sigma2-gp-marginal-variance">3. sigma-squared
+(sigma2) — GP Marginal Variance</h2>
+<p><strong>What it does:</strong> sigma-squared controls how much the
+true infection incidence departs from the mechanistic prediction I*. It
+is the variance of the Gaussian Process residuals.</p>
+<ul>
+<li>sigma2 small (e.g. 0.1): the mechanistic model explains most of the
+spatial variation. The GP makes only minor corrections.</li>
+<li>sigma2 large (e.g. 3.0): the mechanistic model misses a lot. The GP
+has to do heavy lifting to explain spatial variation that I* doesn’t
+capture.</li>
+</ul>
+<p><strong>Prior:</strong> LogNormal(-0.5, 0.5) — median around 0.6,
+always positive.</p>
+<p><strong>Why you should care:</strong> sigma2 is the key diagnostic
+for “how good is my mechanistic model?” If you include the I* offset and
+sigma2 is small, the entomological data is doing its job — Vector Atlas
+parameters are explaining spatial variation in malaria burden. If sigma2
+is large, something is wrong upstream: maybe the entomological
+parameters are inaccurate, or there are important spatial drivers (like
+healthcare access, urbanisation, human mobility) that the Ross-Macdonald
+model doesn’t capture.</p>
+<p>The comparison between models is telling: in our simulation, sigma2 =
+0.79 WITH the offset vs 3.69 WITHOUT. The mechanistic model reduces the
+GP’s workload by nearly 5x.</p>
+<p><strong>What can go wrong:</strong> sigma2 can absorb bias from
+alpha. If alpha is wrong (e.g. biased by the ridge), the GP variance
+inflates to compensate. This is why getting alpha right (via the
+prevalence likelihood) matters.</p>
+<p><strong>Current status:</strong> True sigma2 = 0.36, estimated at
+0.79. Overestimated, likely because alpha bias forces the GP to work
+harder.</p>
+<hr />
+<h2 id="phi-spatial-lengthscale">4. phi — Spatial Lengthscale</h2>
+<p><strong>What it does:</strong> phi controls the range of spatial
+correlation in the GP residuals. It is the lengthscale parameter of the
+Matern 5/2 kernel.</p>
+<ul>
+<li>phi small (e.g. 0.3): residuals are locally correlated. Nearby sites
+can have very different departures from I*.</li>
+<li>phi large (e.g. 3.0): residuals are correlated over long distances.
+If the mechanistic model over-predicts in one location, it likely
+over-predicts across a wide region.</li>
+</ul>
+<p><strong>Prior:</strong> LogNormal(0.5, 0.5) — median around 1.65,
+always positive.</p>
+<p><strong>Why you should care:</strong> phi tells you the spatial scale
+of what the mechanistic model gets wrong. If phi is large, the
+mechanistic model has broad regional biases — maybe Vector Atlas
+estimates are systematically off across a whole province. If phi is
+small, the errors are local — maybe individual sites have unique
+conditions (irrigation, urbanisation) that the ODE doesn’t capture. This
+has direct implications for how to improve the mechanistic model.</p>
+<p><strong>What can go wrong in our simulation:</strong> Our coordinates
+are normalised to [0, 1], and the true phi = 3.0. On this scale, Matern
+5/2 with phi = 3.0 produces &gt;86% correlation between ALL site pairs.
+The GP residuals are essentially a shared time-varying signal, not a
+spatially-varying one. The data cannot distinguish phi = 3.0 from phi =
+5.0 or phi = 10.0 — they all look the same. So the prior (median 1.65)
+pulls the estimate toward 1.5, because that’s where the prior mass is
+and the data offers no resistance.</p>
+<p>This is a simulation design issue, not a model problem. With real
+data on real geographic coordinates (degrees or km), phi would have a
+meaningful interpretation — e.g. “residuals are correlated over ~200
+km.”</p>
+<p><strong>Current status:</strong> True phi = 3.0, estimated at 1.53.
+The data is not informative about phi at this coordinate scale.</p>
+<hr />
+<h2 id="theta-ar1-temporal-correlation">5. theta — AR(1) Temporal
+Correlation</h2>
+<p><strong>What it does:</strong> theta controls how persistent the GP
+residuals are across time. It is the AR(1) autoregressive
+coefficient.</p>
+<ul>
+<li>theta = 0: no temporal memory. This month’s residual is independent
+of last month’s.</li>
+<li>theta = 0.5: moderate persistence. Residuals decay to half their
+value each time step.</li>
+<li>theta = 0.9: strong persistence. If the mechanistic model
+under-predicts this month, it probably under-predicts next month
+too.</li>
+</ul>
+<p><strong>Prior:</strong> Uniform(0, 1) — no preference within the
+valid range.</p>
+<p><strong>Why you should care:</strong> theta captures whether the
+mechanistic model’s errors are transient or persistent. High theta means
+systematic biases that last for months — perhaps the seasonal pattern in
+mosquito abundance is wrong, or an intervention effect (like ITN
+distribution) is not accurately modelled. Low theta means the departures
+are noisy and short-lived.</p>
+<p>In combination with phi, theta and phi together describe the full
+correlation structure of what the mechanistic model gets wrong: phi
+tells you how far errors extend in space, theta tells you how long they
+persist in time.</p>
+<p><strong>What can go wrong:</strong> theta is generally the
+best-behaved parameter. It is directly informed by the temporal
+autocorrelation in the residuals, and there is no identifiability
+issue.</p>
+<p><strong>Current status:</strong> True theta = 0.75, estimated at
+0.73. This is the best-recovered parameter — confirming that the AR(1)
+temporal structure is well-identified by the data.</p>
+<hr />
+<h2 id="how-the-parameters-interact">How the Parameters Interact</h2>
+<p>The five parameters are not independent. Here is how they relate:</p>
+<pre><code>alpha &lt;---&gt; gamma    (non-identifiable from cases alone; prevalence breaks this)
+alpha  --&gt; sigma2    (if alpha is biased, sigma2 inflates to compensate)
+phi   &lt;--&gt; sigma2    (large phi + small sigma2 can look like small phi + large sigma2)
+theta               (largely independent — best identified)</code></pre>
+<p>The most important interaction is the alpha-gamma ridge. Everything
+downstream (sigma2, predictions, maps) depends on getting this right.
+The dual likelihood (prevalence data) is the mechanism that should
+resolve it.</p>
+<hr />
+<h2 id="summary-table">Summary Table</h2>
+<table>
+<colgroup>
+<col style="width: 17%" />
+<col style="width: 12%" />
+<col style="width: 9%" />
+<col style="width: 17%" />
+<col style="width: 11%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Symbol</th>
+<th>True</th>
+<th>Estimated</th>
+<th>Prior</th>
+<th>What It Tells You</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intercept</td>
+<td>alpha</td>
+<td>0.0</td>
+<td>-0.66</td>
+<td>N(0, 1)</td>
+<td>How well I* captures average incidence</td>
+</tr>
+<tr>
+<td>Reporting rate</td>
+<td>gamma</td>
+<td>0.10</td>
+<td>0.15</td>
+<td>N(0.1, 0.05)+</td>
+<td>Fraction of infections reported</td>
+</tr>
+<tr>
+<td>GP variance</td>
+<td>sigma2</td>
+<td>0.36</td>
+<td>0.79</td>
+<td>LogN(-0.5, 0.5)</td>
+<td>How much reality departs from I*</td>
+</tr>
+<tr>
+<td>Spatial lengthscale</td>
+<td>phi</td>
+<td>3.0</td>
+<td>1.53</td>
+<td>LogN(0.5, 0.5)</td>
+<td>Spatial range of mechanistic model errors</td>
+</tr>
+<tr>
+<td>AR(1) correlation</td>
+<td>theta</td>
+<td>0.75</td>
+<td>0.73</td>
+<td>Uniform(0, 1)</td>
+<td>Temporal persistence of errors</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="questions-to-bring-to-supervisors">Questions to Bring to
+Supervisors</h2>
+<ol type="1">
+<li><p><strong>Is 30% survey coverage enough to break the alpha-gamma
+ridge?</strong> Our simulation has 147 prevalence surveys across 490
+site-time combinations. The ridge persists. How much prevalence data
+would be available for the real study site?</p></li>
+<li><p><strong>Should we adjust the simulation design for phi?</strong>
+True phi = 3.0 on [0, 1] coordinates is not estimable. Should we use a
+lower phi, or work in raw coordinate space?</p></li>
+<li><p><strong>Is the sigma2 overestimate acceptable?</strong> sigma2 =
+0.79 vs true 0.36 — is this driven by the alpha bias, or is it a prior
+issue?</p></li>
+<li><p><strong>What does theta = 0.75 imply for the study site?</strong>
+Strong month-to-month persistence in residuals. Does this match
+expectations about how entomological conditions vary
+temporally?</p></li>
+</ol>
+<hr />
+<p><em>This document accompanies the EpiWave FOI Model presentation
+(March 2026). All numbers are from the baseline simulation-estimation
+run with 10 sites, 49 time steps, 1000 MCMC samples.</em></p>
+</body>
+</html>
