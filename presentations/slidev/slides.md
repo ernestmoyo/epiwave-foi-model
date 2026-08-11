@@ -6,12 +6,12 @@ info: |
   Ernest Moyo
   Nelson Mandela African Institution of Science and Technology (NM-AIST)
   Vector Atlas | PhD Objective 2
-  Framework Development Update — March 2026
+  Framework Development Update — August 2026
 layout: default
 class: text-center
 transition: slide-left
 mdc: true
-exportFilename: EpiWave_FOI_Framework_March2026
+exportFilename: EpiWave_FOI_Framework_August2026
 aspectRatio: '16/9'
 canvasWidth: 980
 drawings:
@@ -47,7 +47,7 @@ Developing and Validating a Modeling Framework for Integrating Vector Spatial Da
 </div>
 
 <div class="footer-bar">
-<span>30/3/2026</span>
+<span>11/8/2026</span>
 <span style="font-style: italic;">Integrating Spatial Data on Malaria Vectors into Malaria Risk Mapping Approaches</span>
 <span>1</span>
 </div>
