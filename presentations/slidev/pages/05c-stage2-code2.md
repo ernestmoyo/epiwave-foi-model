@@ -2,7 +2,7 @@
 layout: two-cols
 ---
 
-# Stage 2 Code: Dual Likelihood
+# Stage 2 Code: Dual Likelihood <span class="text-xs align-middle px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold">UPDATED · Aug 2026</span>
 
 <div class="text-xs mt-1">
 
@@ -10,22 +10,22 @@ layout: two-cols
   # continued from fit_epiwave_gp()...
 
   # --- Poisson likelihood (cases) ---
-  # Population enters HERE, not in I*
-  pop_t <- t(population)
+  # N_pop enters HERE, not in I*
+  N_pop_t <- t(N_pop)
   cases_greta <- as_data(t(observed_cases))
   expected_cases <-
-    gamma_rr * I_latent * pop_t
+    gamma_rr * I_latent * N_pop_t
   distribution(cases_greta) <-
     poisson(expected_cases)
 
   # --- Binomial likelihood (prevalence) ---
-  # Independent of gamma — breaks the ridge
-  x_at_surveys <- x_star[survey_indices]
-  log_odds_base <-
-    log(x_at_surveys) - log(1 - x_at_surveys)
-  log_odds_adj <-
-    log_odds_base + epsilon[survey_indices]
-  prev_prob <- ilogit(log_odds_adj)
+  # Prevalence depends on I (GP-adjusted),
+  # NOT mechanistic X -> breaks the ridge
+  prev_intensity <-
+    I_latent %*% prev_conv_matrix
+  intensity <- prev_intensity[
+    prev_data$survey_indices]
+  prev_prob <- 1 - exp(-intensity)
 
   n_pos_greta <- as_data(n_positive)
   distribution(n_pos_greta) <-
@@ -47,11 +47,10 @@ layout: two-cols
 
 **Poisson likelihood (cases)**
 
-Expected cases = gamma x I_latent x population
+Expected cases = gamma x I_latent x **N_pop**
 
 - **gamma** (reporting rate) scales the prediction
-- **population** enters here, not in I\*
-- This likelihood informs the product exp(alpha) x gamma, but cannot separate them alone
+- **N_pop** (population) enters here, not in I\*
 
 </div>
 
@@ -59,24 +58,22 @@ Expected cases = gamma x I_latent x population
 
 **Binomial likelihood (prevalence)**
 
-Prevalence surveys measure actual infection in sampled populations. The GP residuals adjust the baseline ODE prevalence (x_star) on the logit scale.
+Prevalence now derived from **I** (the GP-adjusted incidence) via the detectability convolution: `intensity = I convolved with q`, then `prev = 1 - exp(-intensity)`.
 
-- **Completely independent of gamma** — reporting rate does not affect survey results
-- This is what separately informs alpha, breaking the alpha-gamma ridge
-- Available at a subset of site-time combinations (30% in simulation)
+- Because I carries **alpha + epsilon**, this likelihood **depends on alpha** — separately informing it and breaking the ridge.
 
 </div>
 
-<div class="p-2 bg-amber-50 rounded mb-3 border-l-3 border-amber-400">
+<div class="p-2 bg-amber-50 rounded border-l-3 border-amber-400">
 
-**`model()` call**
+**What changed since March — the key fix**
 
-Returns the 5 parameters for `greta::mcmc()` to sample via HMC. Everything else (GP, likelihoods, latent variables) is handled internally by TensorFlow's automatic differentiation.
+Was: `prev` from **x_star** (mechanistic X) on the logit scale — X is independent of alpha, so it *couldn't* break the ridge. Now: `prev` from **I** via convolution (Nick's fix).
 
 </div>
 
 </div>
 
 <!--
-This slide shows the dual likelihood — the key innovation in Stage 2. The Poisson likelihood for case counts includes population and gamma. The Binomial likelihood for prevalence surveys is independent of gamma. Together they make both alpha and gamma individually identifiable. The model call at the end returns all 5 parameters for MCMC sampling.
+This is the slide with the most important code change. The Poisson likelihood is the same idea — expected cases equal gamma times latent incidence times population, now called N_pop. The big change is the prevalence likelihood. In March it was written against x_star, the mechanistic prevalence from the ODE, on the logit scale. The problem, which Nick identified, is that x_star does not depend on alpha, so that likelihood could never break the alpha–gamma ridge. The current code derives prevalence from I, the GP-adjusted latent incidence, by convolving it with the test-detectability kernel and mapping through one minus exp minus intensity. Because I carries alpha and the GP residual, the prevalence data now depends on alpha and separately informs it. That is the fix behind the 80 percent coverage result.
 -->

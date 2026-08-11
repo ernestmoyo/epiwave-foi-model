@@ -4,7 +4,7 @@ layout: default
 
 # Code Architecture: `epiwave-foi-model.R`
 
-15 functions — modular, two-stage pipeline with GP residuals and dual likelihood
+19 functions — modular, two-stage pipeline with GP residuals and dual likelihood
 
 ```mermaid {scale: 0.45}
 graph LR
@@ -43,8 +43,8 @@ graph LR
 </div>
 
 <div class="p-1 bg-green-50 rounded text-center border border-green-200">
-<strong>Stage 2</strong>: 4 functions<br/>
-<code>greta</code> + <code>greta.gp</code> / TensorFlow HMC
+<strong>Stage 2</strong>: 8 functions<br/>
+<code>greta</code> + <code>greta.gp</code> + detectability convolution
 </div>
 
 <div class="p-1 bg-purple-50 rounded text-center border border-purple-200">
@@ -65,7 +65,7 @@ This is the full architecture of our R implementation — 15 functions total.
 
 Stage 1 has 7 functions. Three parameter generators — get_fixed_m, get_fixed_a, get_fixed_g — each produce time-by-site matrices from Vector Atlas data or temperature-dependent defaults. apply_interventions adjusts m, a, g for ITN/IRS. solve_ross_macdonald_multi_site solves the ODE per site. compute_mechanistic_prediction computes I* = m*a*b*z (infection incidence rate, no population).
 
-Stage 2 has 5 functions. build_gp_kernel constructs the spatial Matern 5/2 kernel. ar1 applies AR(1) temporal correlation (ported from epiwave.mapping). simulate_gp_residuals and simulate_prevalence_surveys generate synthetic data. fit_epiwave_gp builds the GP model with dual Poisson plus Binomial likelihood. Population enters the Poisson likelihood, not I*.
+Stage 2 has 8 functions. build_gp_kernel constructs the spatial Matern 5/2 kernel. ar1 applies AR(1) temporal correlation (ported from epiwave.mapping). default_q_daily, transform_convolution_kernel and build_convolution_matrix build the test-detectability convolution that maps latent incidence I to observed prevalence — this is what lets the prevalence likelihood depend on I rather than mechanistic X. simulate_gp_residuals and simulate_prevalence_surveys generate synthetic data. fit_epiwave_gp builds the GP model with the dual Poisson plus Binomial likelihood. N_pop (population) enters the Poisson likelihood, not I*.
 
 The validation layer has simulate_and_estimate as the orchestrator, plus extract_posterior_summary and compute_performance_metrics.
 -->
