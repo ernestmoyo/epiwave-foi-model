@@ -105,6 +105,10 @@ src: ./pages/07-non-identifiability.md
 ---
 
 ---
+src: ./pages/07b-non-identifiability-updated.md
+---
+
+---
 src: ./pages/08b-gp-residual-structure.md
 ---
 
@@ -113,7 +117,15 @@ src: ./pages/09-validation-results.md
 ---
 
 ---
+src: ./pages/09b-validation-results-updated.md
+---
+
+---
 src: ./pages/11-mcmc-diagnostics.md
+---
+
+---
+src: ./pages/11b-mcmc-diagnostics-updated.md
 ---
 
 ---
@@ -122,6 +134,10 @@ src: ./pages/12-why-wins.md
 
 ---
 src: ./pages/13-next-steps.md
+---
+
+---
+src: ./pages/13b-next-steps-updated.md
 ---
 
 ---
