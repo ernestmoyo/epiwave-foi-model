@@ -68,7 +68,7 @@ Prevalence now derived from **I** (the GP-adjusted incidence) via the detectabil
 
 **What changed since March — the key fix**
 
-Was: `prev` from **x_star** (mechanistic X) on the logit scale — X is independent of alpha, so it *couldn't* break the ridge. Now: `prev` from **I** via convolution (Nick's fix).
+In March, prevalence was computed from x_star, the mechanistic prevalence, on the logit scale. Because x_star does not contain alpha, it could not separate alpha from gamma. It now depends on the modelled incidence I through the detectability convolution (Nick).
 
 </div>
 

@@ -12,19 +12,16 @@ layout: default
 
 <div class="col-span-2 text-xs flex flex-col gap-2">
 
+<div class="p-2 rounded-lg bg-gray-50 border border-gray-300">
+<b>What R-hat means.</b> R-hat compares the separate MCMC chains. When the chains agree it sits near 1; a value above about 1.1 means the chains have not settled on the same answer, so those estimates are not yet trustworthy.
+</div>
+
 <div class="p-2 rounded-lg bg-green-50 border border-green-300">
-<div class="font-bold text-green-700">March questions — answered</div>
-Ran <b>2000 × 4 chains</b> (Punam's advice). <b>α, γ now mix</b>: R̂ 1.02–1.10, ESS 500–790.
+<b>What now mixes.</b> After running 4 chains of 2000 iterations (Punam), α and γ have R-hat between 1.02 and 1.10, with 500–790 effective samples. Their mixing is fine.
 </div>
 
 <div class="p-2 rounded-lg bg-red-50 border border-red-300">
-<div class="font-bold text-red-700">The one remaining issue</div>
-GP hyperparams φ, σ², θ still stuck (R̂ 2.2–3.7, ESS 18–34). 50 reps → <b>structural, not sample-size</b>.
-</div>
-
-<div class="p-2 rounded-lg bg-gray-50 border border-gray-200">
-<div class="font-bold">Root cause (stands from March)</div>
-φ = 3 on [0,1] coords → &gt;86% correlation between all sites; data can't resolve the lengthscale.
+<b>What does not.</b> The GP hyperparameters φ, σ² and θ still have R-hat between 2.2 and 3.7 across all 50 datasets. Because this holds over 50 datasets, it is a real mixing problem, not a one-run fluke.
 </div>
 
 </div>
@@ -33,10 +30,10 @@ GP hyperparams φ, σ², θ still stuck (R̂ 2.2–3.7, ESS 18–34). 50 reps �
 
 <div class="mt-2 p-2 bg-amber-50 border-l-4 border-amber-500 text-xs rounded-lg">
 
-**What changed &amp; why — and the plan:** More iterations resolved α/γ mixing but confirmed the GP-hyperparameter problem is **structural** (50 reps rules out noise). Next step is exactly **Punam's other suggestion — prior predictive checks**: draw φ, σ², θ from priors, simulate data, check the priors put mass on plausible spatial structure before fitting. Likely action: a **PC prior on φ** (Simpson et al.) to stop it wandering.
+<b>Why, and the plan.</b> The cause is in the simulation: with the spatial lengthscale φ set to 3 on coordinates rescaled to a 0–1 square, every pair of sites is more than 86% correlated, so the data cannot tell one lengthscale from another. Increasing iterations fixed α and γ but cannot fix this. The next step is the prior predictive check (Punam): draw φ, σ² and θ from their priors, simulate data, and check the priors put weight on sensible spatial patterns before fitting. I also plan a penalised-complexity prior on φ (Simpson et al.) to keep it from wandering.
 
 </div>
 
 <!--
-In March I asked whether to increase samples, adjust the true phi, and add more prevalence data. Here are the answers, and the plot makes them visual. This is median R-hat across fifty replicates — the dashed red line at 1.1 is the convergence threshold. Alpha and gamma, on the left, sit right at the line: increasing to four chains at two thousand iterations fixed their mixing. But the GP hyperparameters — sigma-squared, phi, theta — tower above at R-hat two to three point seven, and they do so in both models. Fifty replicates matters: it tells us this is a structural mixing problem, not a one-run fluke. The root cause is the one I diagnosed in March — phi equal to three on normalised coordinates makes every site more than 86 percent correlated, so the data genuinely cannot pin down the lengthscale. The plan is Punam's other suggestion, prior predictive checks, plus a penalised-complexity prior on phi. That directly closes her action item.
+In March I put three questions on this slide about convergence. Here is where they stand. R-hat is a convergence check — it compares the separate MCMC chains, sits near one when they agree, and above about one point one when they have not settled on the same answer. After running four chains of two thousand iterations, which was Punam's suggestion, alpha and gamma now mix well — R-hat near one, healthy effective sample sizes. But the GP hyperparameters, phi, sigma-squared and theta, still do not, with R-hat between two point two and three point seven, and they do so across all fifty datasets, which tells me it is a real mixing problem rather than a one-run fluke. The cause is in the simulation design: with phi set to three on coordinates rescaled to a zero-to-one square, every pair of sites is more than eighty-six percent correlated, so the data genuinely cannot distinguish one lengthscale from another. More iterations cannot fix that. The plan is Punam's prior predictive check, and a penalised-complexity prior on phi.
 -->
