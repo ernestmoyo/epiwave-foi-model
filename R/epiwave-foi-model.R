@@ -528,11 +528,15 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop,
   n_times <- nrow(observed_cases)
   n_sites <- ncol(observed_cases)
 
-  # --- Priors (calibrated to epiwave.mapping sim_data.R ranges) ---
+  # --- Priors ---
+  # phi prior is domain-aware: on [0,1]-normalised coordinates, lengthscales above
+  # ~1 make every site >80% correlated (unidentifiable). The prior predictive check
+  # (R/diagnostics/prior_predictive.R) motivated moving phi's median from 1.65 to
+  # ~0.5, keeping its mass in the identifiable range.
   alpha     <- normal(0, 1)                                    # intercept
   gamma_rr  <- normal(0.1, 0.05, truncation = c(0.001, Inf))  # reporting rate
   sigma2    <- lognormal(-0.5, 0.5)                            # GP variance
-  phi       <- lognormal(0.5, 0.5)                             # spatial lengthscale
+  phi       <- lognormal(-0.7, 0.5)                            # spatial lengthscale (median ~0.5)
   theta     <- variable(lower = 0, upper = 1)                  # AR(1) temporal correlation
 
   # --- Spatial GP + AR(1) temporal (epiwave.mapping pattern) ---
@@ -628,7 +632,11 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48, true_params = NULL
       baseline_m = 2.0, baseline_a = 0.3, baseline_g = 1/10,
       b = 0.8, c = 0.8, r = 1/7,
       population = 10000, reporting_rate = 0.1,
-      alpha = 0, gp_sigma = 0.6, gp_phi = 3.0, gp_rho = 0.75
+      # gp_phi on [0,1]-normalised coords: 0.5 gives correlation that decays across
+      # the domain (near sites ~0.9, far sites ~0.04), so the lengthscale is
+      # identifiable. The previous 3.0 left every site >80% correlated (see the
+      # prior predictive check) — the reason phi/sigma2/theta would not converge.
+      alpha = 0, gp_sigma = 0.6, gp_phi = 0.5, gp_rho = 0.75
     )
   }
   # Per-replicate seeds (NULL => original demo seeds)
