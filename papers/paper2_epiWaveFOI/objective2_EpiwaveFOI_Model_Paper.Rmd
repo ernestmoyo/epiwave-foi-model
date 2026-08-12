@@ -36,16 +36,16 @@ geometry: margin=1in
         3.  **Outputs FOI surfaces with quantified uncertainty** usable for programme timing/targeting.
     -   **Objective:** **Develop and validate a vector‑informed FOI mapping module** that **elevates** $m(t,s), a(t,s), g(t,s)$ as data‑linked, time‑varying processes and **plugs them into a national mapping workflow**.
 -   **Contribution (one crisp sentence).**
-    -   **We introduce a computationally efficient, vector‑informed FOI mapping framework that uses fixed entomological parameters from Vector Atlas to generate mechanistic FOI predictions, which serve as informed offsets in a Bayesian geostatistical model, producing policy‑ready FOI maps with quantified uncertainty for Tanzania.**
+    -   **We introduce a computationally efficient, vector-informed FOI mapping framework that uses fixed entomological parameters from Vector Atlas to generate mechanistic FOI predictions, which enter a Bayesian geostatistical model as fixed log-offsets under a spatial GP + AR(1) residual structure and a dual likelihood (cases + prevalence), producing policy-ready FOI maps with quantified uncertainty — validated in a 50-replicate simulation-estimation study, with a planned demonstration for Mozambique.**
 -   **Model**
     -   **Ross–Macdonald FOI core** with **VD (**$m,a,g$) linked to covariates, interventions, and resistance.
     -   **Numerically robust** under seasonal extremes relevant to programme calendars.
--   **Simulation**
-    -   **Demonstrate** recovery of FOI and intervention effects under **shifting VD** compared with **case‑only / coarse‑covariate baselines**.
+-   **Simulation** *(done — the evidence this paper reports)*
+    -   **50-replicate simulation-estimation study** comparing the vector-informed model against the standard geostatistical baseline ($I^{\ast}=0$) on parameter recovery, credible-interval coverage, convergence, and predictive accuracy.
+    -   Headline: the mechanistic offset is what makes the **level** of infection incidence recoverable — the baseline recovers the intercept in none of the 50 replicates.
     -   **Propagate uncertainty** from VD through to FOI surfaces.
--   **Case study**
-    -   **Developed the model — introducing VD.**
-    -   **Demonstrated** it with a **case study in Tanzania**, producing **policy‑ready FOI maps with uncertainty** and illustrating **programme timing/targeting** use.
+-   **Case study** *(planned — data on the MAP Workbench, scoping next)*
+    -   **Mozambique** (DHIS2 routine cases from 2017 plus the 2023 MIS prevalence survey), producing **policy-ready FOI maps with uncertainty** and illustrating **programme timing/targeting** use.
 
 # Methods
 
@@ -53,8 +53,8 @@ geometry: margin=1in
 
 This implements the supervisor's recommended two-stage approach:
 
--   **Two-stage approach:** (1) Use **fixed** $m,a,g$ from Vector Atlas to solve Ross-MacDonald ODEs **once per pixel**, generating mechanistic FOI predictions $I^{\ast}_{s,t}$; (2) Model observed case counts as $C_{s,t} \sim \text{NegBin}(\text{size}, p)$ with $\log(\mu_{s,t}) = \lambda + \log(I^{\ast}_{s,t})$, where $\lambda$ is the log reporting rate and the NegBin overdispersion captures residual variation.
--   **Key advantage:** No inference on ODE parameters — avoids computational bottleneck while leveraging mechanistic knowledge.
+-   **Two-stage approach:** (1) Use **fixed** $m,a,g$ from Vector Atlas to solve Ross–Macdonald ODEs **once per pixel**, generating a mechanistic infection-incidence rate $I^{\ast}_{s,t} = m_{s,t}\,a_{s,t}\,b\,z_{s,t}$; (2) Model latent infection incidence in space and time as $\log(I_{s,t}) = \alpha + \log(I^{\ast}_{s,t}) + \varepsilon_{s,t}$, with $\varepsilon_{s,t}$ a separable spatial Gaussian process (GP) plus AR(1) temporal correlation, and fit jointly to routine case counts and infection-prevalence surveys via a **dual likelihood** (Poisson + Binomial).
+-   **Key advantage:** No inference on the ODE parameters — the mechanistic prediction enters as a fixed log-offset, so the dynamics are solved once per location rather than at every MCMC iteration. The GP captures spatial residuals where the mechanistic prediction is wrong; the dual likelihood makes the intercept $\alpha$ and reporting rate $\gamma$ separately identifiable.
 
 ### REQUIRED APPROACH (Supervisor Specification - Verbatim Implementation)
 
@@ -70,18 +70,23 @@ The code implements the following supervisor guidance:
 >
 > where a is an intercept term and e_{s,t} are spatio-temporal random effects with a zero-mean stationary Gaussian process prior."
 
-**How this is implemented:**
-- ✅ **No inference on m, a, g**: All entomological parameters are fixed inputs
-- ✅ **ODE solve ONCE per pixel**: solve_ross_macdonald_multi_site() solves ODEs once, not during MCMC
-- ✅ **Mechanistic prediction I***: compute_mechanistic_prediction() implements I* = m × a × b × z
-- ✅ **Offset model**: fit_epiwave_with_offset() constructs log(μ) = λ + log(I*)
-- ✅ **Residual structure**: NegBin overdispersion absorbs residual variation (GP abandoned after v1-v3 failures; see Stage 2 Evolution)
-- ✅ **Intervention effects**: apply_interventions() modifies m, a, g parameters before ODE solving
+**How this is implemented (v8, current):**
+
+- ✅ **No inference on $m, a, g$:** all entomological parameters are fixed inputs (Vector Atlas / temperature- and humidity-driven relationships).
+- ✅ **ODE solve ONCE per pixel:** `solve_ross_macdonald_multi_site()` solves the ODEs once before MCMC, not during it.
+- ✅ **Mechanistic prediction $I^{\ast}$:** `compute_mechanistic_prediction()` returns $I^{\ast} = m \times a \times b \times z$ as an infection-incidence **rate** (no population multiplier; population enters the Poisson likelihood separately).
+- ✅ **Offset model:** $\log(I_{s,t}) = \alpha + \log(I^{\ast}_{s,t}) + \varepsilon_{s,t}$.
+- ✅ **Residual structure:** spatial GP innovations (Matérn 5/2) plus AR(1) temporal correlation — separable space–time decomposition matching `epiwave.mapping`.
+- ✅ **Dual likelihood:** Poisson on routine cases and Binomial on infection-prevalence surveys; both depend on $I_{s,t}$ (the GP-adjusted latent incidence), making the intercept $\alpha$ and reporting rate $\gamma$ separately identifiable. The prevalence link is the `epiwave.mapping` **detectability convolution**, $p = 1-\exp(-(IC))$ — not the mechanistic ODE prevalence $X$. This was the outstanding fix from the 30 March 2026 supervisor meeting and it has now landed.
+- ✅ **Prior predictive checks:** implemented in `R/diagnostics/prior_predictive.R` (Punam Amratia's recommendation), and already used to correct the spatial-lengthscale prior.
+- ✅ **Intervention effects:** `apply_interventions()` modifies $m, a, g$ upstream of the ODE — biting rate × ITN coverage × timing-of-biting is the principal mechanism through which interventions enter the framework.
+- ✅ **Sparse GP ready:** inducing-point sparse approximation (`n_inducing = 40` default) is wired in for larger spatial domains.
+
 -   **Simulation estimation study**
-    -   *(We are already doing this ad‑hoc.)*
-    -   Goal: **How well can you recover the parameters** and FOI/incidence when data are simulated from known $m(t,s),a(t,s),g(t,s)$ and interventions.
+    -   *(Currently the primary validation route.)*
+    -   Goal: recover $\alpha$, $\gamma$, GP variance $\sigma^{2}$, lengthscale $\phi$, and AR(1) correlation $\theta$ when data are simulated from known $m(t,s), a(t,s), g(t,s)$ and intervention scenarios. Compare a model that uses $I^{\ast}$ as an offset against the standard geostatistical baseline ($I^{\ast} = 0$).
 -   **Case study**
-    -   **Tanzania**; **low‑response/simple** setup, focusing on interventions and publicly available MAP layers (e.g., **ITNs**, IRS) — **as simple as possible, as complicated as necessary** to illustrate the workflow.
+    -   **Mozambique** (DHIS2 routine cases from 2017 onwards; 2023 MIS prevalence survey; mini-MIS pending). Public covariates only (MAP ITN/IRS layers, environmental rasters). **As simple as possible, as complicated as necessary** to illustrate the workflow. Mozambique is preferred over Angola for the demonstration because Angolan incidence has extreme values that destabilise the model fit (Punam Amratia, supervisor meeting, 30 March 2026).
 
 ## Model Description
 
@@ -91,18 +96,20 @@ The code implements the following supervisor guidance:
 -   **Vector / entomology (drivers of VD):** abundance/proxy layers, micro‑climate–derived survival, bioassay **resistance** indices, ITN/IRS **coverage/use**.
 -   **Environment:** rainfall, temperature, humidity, NDVI, elevation (harmonised to grid/time).
 
-### Observation models (same as EpiWave; brief recap)
+### Observation models (dual likelihood; distinct symbols for population vs sample size)
+
+We use a **dual likelihood**: routine case counts and infection-prevalence surveys both inform the latent incidence $I_{l,t}$, with population $N_{l}$ entering the cases line and the (smaller) survey sample size $T_{l,t}$ entering the prevalence line. The two are different quantities and must carry different symbols (Gerry Ryan, supervisor meeting, 30 March 2026).
 
 -   **Cases (admin unit** $l$, month $t$): $$
-    C_{l,t}\sim \mathrm{Poisson}\!\big(\gamma_l I_{l,t}\big),\quad
-    \gamma_l>0\ \text{(reporting/symptomatic rate; optionally hierarchical)}.
-    $$ Pixel‑to‑admin aggregation via population weights; $I_{l,t}$ is **latent incidence** linked below.
--   **Prevalence (optional):** $$
-    Y_{l,t}\sim \mathrm{Binomial}\!\big(N_{l,t}, p_{l,t}\big),\qquad
-    p_{l,t}\ \text{linked to latent incidence or auxiliary state.}
-    $$
+    C_{l,t}\sim \mathrm{Poisson}\!\big(\gamma\, I_{l,t}\, N_{l}\big),\quad
+    \gamma>0\ \text{(reporting/symptomatic rate)},\ N_{l}\ \text{(population at risk)}.
+    $$ Pixel-to-admin aggregation via population weights; $I_{l,t}$ is the **latent infection-incidence rate** (linked below to the mechanistic offset and the spatio-temporal residual structure).
+-   **Infection prevalence:** $$
+    Y_{l,t}\sim \mathrm{Binomial}\!\big(T_{l,t},\, p_{l,t}\big),\qquad
+    p_{l,t}=h(I_{l,\cdot})=1-\exp\!\Big(-\textstyle\sum_{k\ge 0} I_{l,t-k}\,w_{k}\Big),
+    $$ where $T_{l,t}$ is the **survey sample size** (number of individuals tested) and $h(\cdot)$ is the **detectability convolution** used in `epiwave.mapping`: recent infections are accumulated through a test-detectability kernel $w_{k}$ and converted to a prevalence via the complementary-exponential (competing-risk) link, which is bounded in $(0,1)$ and gradient-safe under HMC. The daily kernel $q(d)$ — the probability an infected person still tests positive $d$ days after infection — rises over the first few days and decays to zero by a 30-day horizon; it is integrated to monthly weights $w_{k}$ by `transform_convolution_kernel()` and assembled into the banded matrix $C$ by `build_convolution_matrix()`, so the whole convolution is one matrix multiply $I\,C$ inside greta. Crucially, $p_{l,t}$ depends on the **GP-adjusted** latent incidence $I_{l,t}$, not on the mechanistic prevalence $X_{l,t}$ from the ODE alone — this is what makes the prevalence likelihood respond to the intercept $\alpha$ and so makes $\alpha$ and $\gamma$ separately identifiable (Nick Golding, 30 March 2026). **This fix has now landed** (`fit_epiwave_gp()`, `R/epiwave-foi-model.R`) and the simulation-estimation results in the Results section are produced under it.
 
-> **Connector (mindful of notation):** we define the **force of infection** $\xi_{t,s}$ (per‑person per‑day) from the transmission block below, and use standard EpiWave mappings to connect $\xi$ → **incidence** $I$ → **cases** $C$ (and optionally to **prevalence** $p$) without altering the observation likelihoods.
+> **Connector (mindful of notation):** the transmission block below produces the per-person per-day **force of infection** $\xi_{t,s} = m_{t,s}\,a_{t,s}\,b\,z_{t,s}$, equivalent to the mechanistic incidence rate $I^{\ast}_{s,t}$ used as an offset in Stage 2. Population $N$ does **not** appear in $I^{\ast}$ — it enters at the Poisson likelihood line.
 
 ### Transmission block (Ross–Macdonald + FOI; VD elevated)
 
@@ -143,7 +150,7 @@ g^{\ast}_{t,s} = -\frac{1}{\Delta t}\ln S_{\Delta t}\!\big(T_{t,s}, H_{t,s},\ldo
 g_{t,s} = g^{\ast}_{t,s}\,\Big(1 + n_{t,s}\,u_{t,s}\,\rho^{(g)}\Big),\ \ \rho^{(g)}>0.
 $$ (IRS terms analogous if included.)
 
-### Two-Stage Modeling Approach (Mechanistic Offset + NegBin)
+### Two-Stage Modeling Approach (Mechanistic Offset + Spatial GP + AR(1) + Dual Likelihood)
 
 To avoid computational bottlenecks from inferring ODE parameters, we adopt a **two-stage framework**:
 
@@ -153,56 +160,97 @@ Using **fixed** entomological parameters from Vector Atlas or temperature-depend
 
 1.  For each pixel $s$, obtain $m_{t,s}, a_{t,s}, g_{t,s}$ from Vector Atlas outputs or covariate models
 2.  Solve Ross-MacDonald ODEs **once** to get mosquito infection prevalence $z_{t,s}$
-3.  Compute mechanistic incidence prediction: $$I^{\ast}_{s,t} = m_{t,s} \times a_{t,s} \times b \times z_{t,s} \times \text{pop}_{s,t}$$
+3.  Compute mechanistic infection-incidence **rate**: $$I^{\ast}_{s,t} = m_{t,s} \times a_{t,s} \times b \times z_{t,s}$$
+    (population is **not** included here; it enters the Poisson likelihood in Stage 2).
 
 This stage uses standard ODE solvers (`deSolve` in R) and runs in seconds per pixel. **No MCMC, no inference on** $m,a,g$.
 
-#### Stage 2: Bayesian Calibration with Mechanistic Offset
+#### Stage 2: Bayesian Calibration with Spatial GP + AR(1) + Dual Likelihood
 
-Model observed case counts with $I^{\ast}$ as a structural log-offset under a Negative Binomial likelihood:
-
-$$
-\log \mu_{s,t} = \lambda + \log I^{\ast}_{s,t}
-$$
+Model latent infection-incidence as a log-linear function of the mechanistic offset plus a spatio-temporal residual:
 
 $$
-C_{s,t} \sim \text{NegBin}(\text{size}, \, p_{s,t}), \quad p_{s,t} = \frac{\text{size}}{\text{size} + \mu_{s,t}}
+\log\big(I_{s,t}\big) \;=\; \alpha \;+\; \log\big(I^{\ast}_{s,t}\big) \;+\; \varepsilon_{s,t}.
 $$
 
-where:
+The residual $\varepsilon_{s,t}$ uses a **separable space–time decomposition** — a spatial Gaussian process at each time step plus AR(1) temporal correlation across time steps, matching the implementation in `epiwave.mapping`:
 
--   $\lambda$ is the **log reporting rate** — the single identifiable scaling parameter linking mechanistic predictions to observed case counts ($e^\lambda$ = reporting rate).
--   $I^{\ast}_{s,t}$ is the **fixed** mechanistic prediction from Stage 1.
--   The Negative Binomial captures extra-Poisson overdispersion arising from spatial and temporal heterogeneity not captured by the mechanistic offset.
+$$
+\begin{aligned}
+f_t \;&\sim\; \mathcal{GP}\!\big(0,\ \sigma^{2}\,K_{\mathrm{Mat\acute{e}rn}\,5/2}(\phi)\big),\quad t = 1,\ldots,T \\[2pt]
+\varepsilon_{t} \;&=\; \theta\,\varepsilon_{t-1} \;+\; f_t,\qquad \theta\in[0,1).
+\end{aligned}
+$$
 
-**Parameter non-identifiability and resolution.** An earlier formulation used separate intercept $\alpha$ and reporting rate $\gamma$: $\mu = \gamma \cdot e^\alpha \cdot I^*$. For any constant $k$, the pair $(\alpha + k, \gamma e^{-k})$ yields an identical likelihood — the parameters trade off freely along a ridge. MCMC chains wandered this ridge, producing apparent non-convergence despite correct product recovery. The fix was to merge into a single identified parameter $\lambda = \log(\gamma) + \alpha$, so that $e^\lambda$ is the reporting rate. This resolved all convergence issues ($\hat{R} < 1.05$, ESS > 1,000).
+Concretely, this is implemented in `greta.gp` as `gp(spatial_coords, K_space, n = n_times)` for the spatial innovations followed by `ar1(rho = theta, innovations = f)` for the AR(1). The latent space therefore has dimension $S$ (number of sites), not $S \times T$ — which is what makes HMC tractable. Passing 3D coordinates $(\text{lon}, \text{lat}, t)$ to a single `gp()` call inflates the latent space to $S \times T$ and produces 100% bad HMC transitions; the separable decomposition was tested and works (see Stage 2 evolution below).
 
-**Why not a GP?** During simulation-estimation validation (10 sites × 49 months), three progressively simpler GP formulations were tested and all failed:
+**Dual likelihood.** Both observation streams depend on the **GP-adjusted** latent incidence $I_{s,t}$:
 
-1.  **Joint GP (v1):** 490×490 covariance matrix; Cholesky singular; 0% HMC acceptance
-2.  **Separable GP (v2):** 10×10 + 49×49 Kronecker; 59-dimensional latent space; HMC couldn't tune
-3.  **Hierarchical random effects (v3):** Non-centred Normal; Poisson + 59 parameters; extreme gradients
+$$
+\begin{aligned}
+C_{l,t} \;&\sim\; \mathrm{Poisson}\!\big(\gamma\,I_{l,t}\,N_{l}\big), \\[2pt]
+Y_{l,t} \;&\sim\; \mathrm{Binomial}\!\big(T_{l,t},\,1-e^{-(I C)_{l,t}}\big),
+\end{aligned}
+$$
 
-The Negative Binomial (v4) with only 2 parameters achieved >90% HMC acceptance. The overdispersion parameter absorbs residual heterogeneity without the computational burden of a latent spatial process. Spatial structure can be added via INLA/SPDE in a future extension when production-scale data are available.
+where $C$ is the detectability convolution matrix defined above, $N_{l}$ is the population at risk, and $T_{l,t}$ is the survey sample size. The dual likelihood is what makes $\alpha$ and $\gamma$ separately identifiable: with case data alone, $\alpha$ and $\gamma$ form a non-identifiable ridge (only the product is identified), and the prevalence likelihood — provided it depends on $I$ rather than the mechanistic prevalence $X$ from the ODE — supplies the second piece of information needed to separate them (Nick Golding, supervisor meeting, 30 March 2026).
 
-**Inference:** Only $\lambda$ and $\log(\text{size})$ are estimated via MCMC. The mechanistic model is **pre-computed and fixed**.
+**Centring the residual field.** By default the intercept $\alpha$ and the realised mean of the GP + AR(1) field are only weakly separated, which slows $\alpha$'s mixing. `fit_epiwave_gp(center_alpha = TRUE)` subtracts the realised field mean, $\tilde{\varepsilon}_{s,t}=\varepsilon_{s,t}-\bar{\varepsilon}$, so that $\alpha$ is the sole intercept. The estimand then becomes the **effective intercept** $\alpha^{\text{eff}} = \alpha_{\text{true}} + \bar{\varepsilon}$, and the simulation-estimation harness scores recovery against that quantity. All results reported below use `center_alpha = TRUE`.
 
-### Priors and Parameters (Offset Model)
+**Sparse-GP option.** For larger spatial domains, `fit_epiwave_gp()` accepts a set of inducing points (default `n_inducing = 40`) so that the spatial kernel scales as $O(M^{2}S)$ rather than $O(S^{3})$. This is the chosen route to scalability over Block-Circulant Embedding or NNGP for the current paper, but those options remain open.
 
-Since we **do not infer** ODE parameters, the Bayesian model is much simpler:
+**Inference:** Five hyperparameters are estimated via HMC — $\alpha, \gamma, \sigma^{2}, \phi, \theta$. The latent GP innovations $f_t$ and AR(1) residuals $\varepsilon_t$ are sampled jointly with the hyperparameters. The mechanistic Stage 1 model is **pre-computed and fixed**.
+
+### Stage 2 evolution — how we arrived at v8
+
+For full transparency we record the development path, since several intermediate formulations are reported in earlier presentations of this work. All were tested on the same simulation (10 sites × 48 months):
+
+1.  **v1 — Joint GP** over $(s,t)$: $S \times T = 490$-dimensional latent vector; 490 × 490 dense covariance; Cholesky singular; 0% HMC acceptance. Failed.
+2.  **v2 — Separable space-only GP + dense time** (full $T \times T$): 10 × 10 + 49 × 49 Kronecker; 59-dimensional latent space; HMC could not tune. Failed.
+3.  **v3 — Hierarchical Normal random effects** (non-centred): Poisson likelihood plus 59 random-effects parameters; extreme gradients; mixing collapsed. Failed.
+4.  **v4 — Negative Binomial offset** (no GP, no dual likelihood): two parameters ($\lambda = \log\gamma + \alpha$, $\log\text{size}$); achieved $>90\%$ HMC acceptance. **Rejected by supervisor:** moving spatially-correlated error into the sampling model means the model assumes the mechanistic prediction perfectly explains spatial variation — it cannot map residuals (Nick Golding, `correspondence/issues/feedback_from_nick.txt`).
+5.  **v5 — 3D product kernel** $(\text{lon}, \text{lat}, t)$ passed to a single `gp()` call: latent space inflated to $S \times T$; 100% bad transitions at every scale tested. Failed.
+6.  **v6 — Spatial GP + AR(1), case-only likelihood:** correct space–time structure, 4% bad transitions, parameters recovered — but with case data alone $\alpha$ and $\gamma$ form a ridge and only the product is identified.
+7.  **v7 — Spatial GP + AR(1) + dual likelihood, prevalence written against $X$:** adds the prevalence Binomial, but with the survey probability taken from the mechanistic ODE prevalence $X$. Because $X$ does not contain $\alpha$, this stream carried no information about the intercept and the $\alpha$–$\gamma$ ridge survived — the diagnosis Nick Golding gave on 30 March 2026.
+8.  **v8 — Prevalence against $h(I)$ via the detectability convolution (current):** the survey probability becomes $1-\exp(-(IC))$, so prevalence depends on the GP-adjusted incidence and therefore on $\alpha$. Combined with $\alpha$-centring and a 4 × 2,000 sampling budget, this is the specification behind the 50-replicate study reported below. The $\alpha$–$\gamma$ ridge resolves; a separate, distinct problem in the GP hyperparameters remains and is diagnosed in the prior predictive section.
+
+The history is preserved here so that reviewers can see why the current decomposition was chosen over the apparently simpler alternatives.
+
+### Priors and Parameters (Stage 2)
+
+We **do not infer** the ODE parameters. The Bayesian model has five inferred hyperparameters plus the latent GP / AR(1) terms.
 
 **Fixed (not inferred):**
 
--   **Entomological parameters:** $m_{t,s}, a_{t,s}, g_{t,s}$ from Vector Atlas or temperature models
--   **Transmission parameters:** $b = 0.8$, $c = 0.8$, $r = 1/7$ per day
--   **Mechanistic prediction:** $I^{\ast}_{s,t}$ pre-computed from Stage 1
+-   **Entomological parameters:** $m_{t,s}, a_{t,s}, g_{t,s}$ from Vector Atlas or temperature- and humidity-driven relationships.
+-   **Transmission parameters:** $b = 0.8$ (mosquito-to-human transmission), $c = 0.8$ (human-to-mosquito transmission), $r = 1/7\,\text{d}^{-1}$ (human recovery rate).
+-   **Mechanistic prediction:** $I^{\ast}_{s,t}$ pre-computed from Stage 1.
 
-**Inferred via MCMC (2 parameters only):**
+**Inferred via HMC (5 scalar hyperparameters + latent GP/AR(1)),** exactly as declared in `fit_epiwave_gp()`:
 
--   **Log reporting rate:** $\lambda \sim \mathcal{N}(-2, 1)$, placing prior mass on $e^\lambda \in (0.02, 0.5)$, consistent with malaria reporting fractions in the literature.
--   **Log overdispersion:** $\log(\text{size}) \sim \mathcal{N}(3, 1)$, with $\text{size} = \exp(\log\text{\_size})$. This gives a median size of ~20 with 95% prior CI from ~1 to ~400. Large size recovers the Poisson limit; small size allows heavy overdispersion. The log-scale parameterisation provides a smooth, unconstrained posterior surface for HMC. (An earlier Beta(1,9) prior on $\phi = 1/\text{size}$ caused boundary issues with ESS = 82; reparameterising to $\log(\text{size})$ improved ESS to 489.)
+| Parameter | Prior (as coded) | Rationale |
+|----|----|----|
+| Intercept $\alpha$ | $\mathcal{N}(0,\,1)$ | Log-scale shift between the mechanistic prediction and the latent incidence rate; unit scale is weakly informative on the log scale. |
+| Reporting rate $\gamma$ | $\mathcal{N}(0.1,\,0.05)$ truncated to $(0.001,\infty)$ | Centred on a 10% reporting fraction, consistent with routine-surveillance completeness in the literature; truncation keeps it positive. Coded as `gamma_rr` to avoid masking `greta::gamma()`. |
+| GP variance $\sigma^{2}$ | $\mathrm{LogNormal}(-0.5,\,0.5)$ | Median $\approx 0.61$ on the log-incidence variance scale — allows residual spatial structure without letting the GP absorb the whole signal. |
+| Spatial lengthscale $\phi$ | $\mathrm{LogNormal}(-0.7,\,0.5)$ | **Domain-aware.** Coordinates are rescaled to the unit square, so lengthscales above $\approx 1$ make every pair of sites more than 80% correlated and $\phi$ becomes unidentifiable. The prior median was moved from $1.65$ to $\approx 0.5$ on the evidence of the prior predictive check (below). |
+| AR(1) correlation $\theta$ | $\mathrm{Uniform}(0,1)$ | Flat over the admissible range of temporal persistence. |
 
-This reduces parameter dimensionality to $O(1)$ — two scalars — compared to $O(S \times T)$ for joint ODE inference or $O(S + T + 4)$ for GP hyperparameter inference.
+Note on identifiability: separately identifying $\alpha$ and $\gamma$ requires the dual likelihood **and** the prevalence stream being written against $I$; with cases alone, or with prevalence written against $X$, the model only identifies $\gamma\, e^{\alpha}$ (Nick Golding, 30 March 2026). The truncated-Normal prior on $\gamma$ replaced an earlier Beta specification: it puts mass where malaria reporting fractions actually sit without the boundary behaviour a Beta prior produced in the tails.
+
+### Prior predictive checks
+
+Punam Amratia recommended prior predictive checking (30 March 2026) as the route to the GP-hyperparameter mixing problem. `R/diagnostics/prior_predictive.R` implements it as pure forward simulation — no greta, no MCMC: draw $(\alpha,\gamma,\sigma^{2},\phi,\theta)$ from the priors, push each draw through the model, and record the data it implies.
+
+The critical diagnostic is **not** whether the implied data look plausible in the aggregate but whether the drawn lengthscale sits in a region the geometry can resolve. For each draw we compute the Matérn 5/2 correlation at the **largest inter-site distance**:
+
+$$
+\rho_{\min}(\phi) \;=\; \Big(1+r+\tfrac{r^{2}}{3}\Big)e^{-r},\qquad r=\frac{\sqrt{5}\,d_{\max}}{\phi}.
+$$
+
+If $\rho_{\min}$ is near 1 then every site is effectively identically correlated with every other, the likelihood is flat in $\phi$, and no amount of additional sampling can identify it. We treat $\rho_{\min} > 0.8$ as the unidentifiable region. Results are in the Results section.
+
+Compared with joint inference on $m, a, g$ (which would scale $O(S \times T)$ in the parameter dimension), Stage 2 is $O(1)$ in the hyperparameters plus $O(S \times T)$ in latent GP / AR(1) values — the latent values are linear-Gaussian conditional on the hyperparameters and so do not dominate sampling cost.
 
 ### Computation and Scalability
 
@@ -218,22 +266,24 @@ Our two-stage approach achieves **orders-of-magnitude speedup** compared to join
 
 For a country with $S = 500$ pixels at 10km resolution: - Total Stage 1 time: \~8 minutes (single core) or \~1 minute (8 cores) - **Run once, reuse forever** for different observation models
 
-#### Stage 2: Bayesian Inference (NegBin Offset Model)
+#### Stage 2: Bayesian Inference (Spatial GP + AR(1) + Dual Likelihood)
 
--   **MCMC:** Hamiltonian Monte Carlo (HMC) via `greta`/TensorFlow
--   **Parameters:** Only 2 — $\lambda$ (log reporting rate) and $\log(\text{size})$ (overdispersion)
--   **Per-iteration cost:** \~1-5 seconds (vs. \~25 seconds if solving ODEs at each iteration)
--   **Typical run:** 2 chains × 1,000 samples + 500 warmup = **~10 seconds** for simulation study; scales to 1-2 hours for national data
--   **Diagnostics:** $\widehat{R} < 1.01$, ESS \> 400, posterior predictive checks
+-   **MCMC:** Hamiltonian Monte Carlo (HMC) / NUTS via `greta` + `greta.gp` + TensorFlow.
+-   **Hyperparameters:** Five — $\alpha, \gamma, \sigma^{2}, \phi, \theta$ — plus the latent GP innovations and AR(1) residuals.
+-   **Per-iteration cost:** dominated by Cholesky on the spatial kernel ($O(S^{3})$ for full GP, $O(M^{2}S)$ with $M$ inducing points). For $S = 10$ sites $\times\,T = 48$ months the model is small; the binding constraint is the number of **replicates × models × chains**, not any single fit.
+-   **Sampling budget (settled).** 4 chains × 2,000 warmup + 2,000 post-warmup samples, following Punam Amratia's recommendation (30 March 2026) that the earlier 500-iteration runs were still inside the burn-in window. This budget is what moved $\alpha$ and $\gamma$ from unconverged to $\widehat R \le 1.10$; it did **not** fix the GP hyperparameters, for the structural reason set out in the prior predictive results.
+-   **Where the study was run.** The 50-replicate study (50 replicates × 2 models × 4 chains) was executed on the **MAP Workbench** rather than a laptop; the local machine can fit single replicates for development but not the full study in reasonable wall-clock. Local and Workbench runs are not bit-identical — TensorFlow builds, thread counts and BLAS differ — so the Workbench study object (`outputs/sim_estimation_results.RData`, 11 August 2026) is treated as canonical and every number reported below is read from it.
+-   **Sparse GP:** inducing-point approximation (`n_inducing = 40` default) is wired in via `gp(..., inducing = inducing_array)` and is the chosen route to scaling to country-level grids. The reported study used the **full** GP (`use_sparse_gp = FALSE`) since $S=10$.
+-   **Diagnostics:** $\widehat{R}$, ESS, prior predictive checks (now implemented, `R/diagnostics/prior_predictive.R`), posterior predictive checks.
 
 #### Computational Comparison
 
-| Approach | ODE Solves | MCMC Time | Scalability |
+| Approach | ODE Solves | Stage 2 cost | Scalability |
 |----|----|----|----|
-| **Joint inference** (old) | $N_{\text{iter}} \times S$ | 28+ hours | Poor (not feasible) |
-| **Two-stage offset** (new) | $S$ (once) | 1-2 hours | Excellent (national scale) |
+| **Joint inference on $m,a,g$** (rejected) | $N_{\text{iter}} \times S$ | dominated by ODE solves at each iteration | Poor (infeasible) |
+| **Two-stage offset + GP + AR(1)** (current) | $S$ (once, pre-MCMC) | dominated by Cholesky on $K_{\mathrm{Mat\acute{e}rn}}(\phi)$ | Good (sparse GP makes country-scale tractable) |
 
-**Key advantage:** Stage 1 complexity is $O(S)$ and done once; Stage 2 is standard geostatistics with no ODE overhead. This makes **national-scale mapping feasible**.
+**Key advantage:** Stage 1 complexity is $O(S)$ and done once; Stage 2 is a standard spatio-temporal geostatistical model with no ODE overhead during MCMC. The mechanistic prediction enters as a fixed log-offset, so the GP only has to model **departures** from the mechanistic baseline rather than the full spatial signal — which is precisely why the WITH-offset model recovers parameters more cleanly than the I*=0 baseline (see Results).
 
 ## Data (inclusion/exclusion)
 
@@ -255,102 +305,99 @@ The simulation study evaluates whether including mechanistic vector information 
 **Simulation-Estimation Framework:**
 
 ```r
-# Load the framework (~580 lines, 11 functions)
-source("R/epiwave-foi-model.R")
+# Load the framework + the multi-replicate harness
+source("R/greta_setup.R")            # reproducible TF / Python config
+source("R/epiwave-foi-model.R")      # Stage 1 + Stage 2 functions
+source("R/sim_estimation_harness.R") # multi-replicate simulation-estimation study
 
-# Run the simulation-estimation study
-results <- simulate_and_estimate(
-  n_sites    = 10,       # 10 spatial locations
-  n_times    = 48,       # 4 years of monthly data
-  include_interventions = TRUE,  # ITN scale-up 0%→70%
-  run_mcmc   = TRUE,     # Run HMC sampling
-  n_samples  = 1000,     # Post-warmup samples
-  warmup     = 500,      # Warmup iterations
-  chains     = 2         # Independent chains
+# Run the study at publication settings. Each replicate simulates a fresh
+# dataset, fits Model A (WITH I* offset) and Model B (I* = 0), and scores
+# parameter recovery, credible-interval coverage, MCMC convergence (Rhat/ESS),
+# and predictive accuracy of the latent incidence surface.
+study <- run_sim_estimation_study(
+  n_reps       = 50,      # independent simulated datasets
+  n_sites      = 10,      # spatial locations
+  n_times      = 48,      # monthly time steps (4 years)
+  n_samples    = 2000,    # post-warmup samples per chain
+  warmup       = 2000,
+  chains       = 4,
+  center_alpha = TRUE,    # centre the GP field so alpha is the sole intercept
+  use_sparse_gp = FALSE,
+  out_path     = "outputs/sim_estimation_results.RData"
 )
 
-# results contains:
-# - true_incidence: True incidence matrix [49 × 10]
-# - observed_cases: Simulated cases with Poisson noise
-# - mechanistic_prediction: Stage 1 I* predictions
-# - draws_with / draws_without: MCMC draws for both models
-# - true_params: Parameter list (reporting_rate = 0.1, etc.)
+# study contains:
+#   recovery_summary    # per-parameter bias, CI width, coverage, median Rhat/ESS
+#   predictive_summary  # incidence RMSE / MAE / field coverage, Model A vs B
+#   per_rep, predictive # tidy per-replicate rows
+#   example             # replicate-1 draws + predicted surfaces (for figures)
+#   meta                # run settings (n_reps, grid, MCMC, date)
 ```
 
-**Truth Generation (5 Steps):**
+**Truth generation (Stage 1 -> Stage 2 -> observations):**
 
-1. Generate fixed entomological parameters with seasonal variation
-2. Apply ITN intervention effects on m, a, g (0% → 70% coverage, 20% resistance)
-3. Solve Ross-MacDonald ODEs once per site to get z_{t,s}
-4. Compute true incidence: I^{true}_{s,t} = m_{t,s} a_{t,s} b z_{t,s} × population
-5. Generate observed cases: C_{s,t} ~ Poisson(γ I^{true}_{s,t})
+1. Generate fixed entomological parameters $m, a, g$ with seasonal variation.
+2. Apply ITN intervention effects on $m, a, g$ (0% -> 70% coverage, 20% insecticide resistance) **upstream** of the ODE.
+3. Solve the Ross-Macdonald ODE once per site for the mosquito infection prevalence $z_{s,t}$.
+4. Compute true infection-incidence rate: $I^{\text{true}}_{s,t} = m_{s,t}\,a_{s,t}\,b\,z_{s,t}$ (no population — population enters the Poisson likelihood).
+5. Add a true GP + AR(1) residual $\varepsilon_{s,t}$ drawn from $\mathcal{N}(0, \sigma^{2})$ with Matern 5/2 spatial kernel and AR(1) temporal correlation.
+6. Generate observed cases $C_{s,t} \sim \mathrm{Poisson}(\gamma\,I^{\text{true}}_{s,t}\,N_{s})$ and prevalence $Y_{s,t} \sim \mathrm{Binomial}(T_{s,t},\,1-e^{-(I^{\text{true}}C)_{s,t}})$ — the truth is generated through the **same** detectability convolution the likelihood uses, so the simulation-estimation test is self-consistent.
+
+**Truth values and survey design.** $m_{0}=2.0$, $a_{0}=0.3$, $g_{0}=0.1$, $b=c=0.8$, $r=1/7$, $N=10{,}000$, $\gamma=0.1$, $\alpha=0$, $\sigma=0.6$ (so $\sigma^{2}=0.36$), $\theta=0.75$. Under $\alpha$-centring the recovery target is the effective intercept $\alpha^{\text{eff}} = \alpha + \bar{\varepsilon}$.
+
+Two design settings carry caveats that are load-bearing for how the results should be read:
+
+-   **Spatial lengthscale.** The 11 August study used $\phi = 3$ on unit-square coordinates. The prior predictive check (run afterwards, 12 August) shows this implies a correlation of $0.90$ between the two farthest sites — i.e. the truth was placed *inside* the unidentifiable region. The simulation default has since been changed to $\phi = 0.5$ (min correlation $0.11$), but **the reported study has not yet been re-run under it**. This is the single most important qualification on the GP-hyperparameter results below.
+-   **Survey coverage.** `simulate_prevalence_surveys()` defaults to `survey_fraction = 0.3` with sample sizes drawn from 50–200, i.e. a prevalence survey at 30% of all site-months. David Duncan flagged in Melbourne (11 August 2026) that this is far more survey coverage than any real programme has, so the identifiability result needs re-testing against survey numbers taken from real prevalence data before it can be claimed to hold in practice.
 
 ### Model Comparison
 
-**Model A: Vector-Informed (WITH Mechanistic Offset)** - Supervisor's approach
-$$I_{s,t} = \exp(\alpha + \ln I^*_{s,t} + \varepsilon_{s,t})$$
-where $I^*_{s,t}$ is computed from true/Vector Atlas entomological parameters
+The simulation-estimation study contrasts the supervisor's recommended formulation with the standard geostatistical baseline. The two models share the **same** spatial GP + AR(1) residual structure and **the same** dual likelihood — they differ only in whether the mechanistic offset $\log(I^{\ast})$ is included.
 
-**Model B: Standard Geostatistical (WITHOUT Vector Information)** - Baseline
-$$I_{s,t} = \exp(\alpha + \varepsilon_{s,t})$$
+**Model A — Vector-informed (WITH mechanistic offset)** — supervisor's approach:
+$$\log(I_{s,t}) = \alpha + \log\!\big(I^{\ast}_{s,t}\big) + \varepsilon_{s,t}.$$
+
+**Model B — Standard geostatistical baseline ($I^{\ast} = 0$)**:
+$$\log(I_{s,t}) = \alpha + \varepsilon_{s,t}.$$
+
+The baseline drops the offset **entirely** rather than substituting any constant such as $\overline{\log I^{\ast}}$, in line with Nick Golding's specification ("setting $I^{\ast}=0$ corresponds to the standard geostatistical approach"). This is the comparison implemented in `R/experiments/sim_estimation_study.R` via the `use_mechanistic` flag.
 
 ### Post-MCMC Analysis
 
-After running MCMC sampling, compare the models:
-
-```r
-# MCMC draws are returned by simulate_and_estimate() when run_mcmc = TRUE
-draws_with    <- results$draws_with     # mcmc.list object
-draws_without <- results$draws_without  # mcmc.list object
-
-# Extract posterior summaries (mean, median, sd, 95% CI)
-posterior_with    <- extract_posterior_summary(draws_with)
-posterior_without <- extract_posterior_summary(draws_without)
-
-# Recovered reporting rate
-reporting_rate <- exp(posterior_with$mean[
-  posterior_with$parameter == "log_rate"
-])
-# Result: 0.1003 (true = 0.10)
-
-# Posterior predictive comparison
-I_star <- results$mechanistic_prediction
-pred_with    <- reporting_rate * I_star  # WITH: tracks dynamics
-pred_without <- exp(posterior_without$mean[
-  posterior_without$parameter == "log_rate"
-]) * mean(I_star)  # WITHOUT: flat prediction
-
-# Performance metrics
-metrics_with    <- compute_performance_metrics(pred_with, results$observed_cases)
-metrics_without <- compute_performance_metrics(pred_without, results$observed_cases)
-# RMSE: 14.7 (WITH) vs 125.5 (WITHOUT) — 88% improvement
-```
+Scoring is automated across replicates by the harness, which returns
+per-parameter recovery and credible-interval coverage, MCMC convergence
+($\widehat R$ and ESS), and predictive accuracy of the latent incidence surface
+(posterior incidence is reconstructed per draw via `greta::calculate()` from the
+`I_latent` node carried by each fitted model). The aggregated tables are in the
+Results section; the underlying objects are `study$recovery_summary`,
+`study$predictive_summary`, and the tidy `study$per_rep` / `study$predictive`.
 
 ### Observed Outcome
 
-**Model A (vector-informed) demonstrated:**
+Across 50 replicates (numbers in Results):
 
-- **88% lower RMSE** than Model B (14.7 vs 125.5 cases)
-- **10× tighter credible intervals** for the reporting rate (CI width 0.0013 vs 0.0133)
-- **Near-zero bias** in reporting rate recovery: estimated $e^\lambda = 0.1003$ vs true 0.10
-- Correctly captured seasonal FOI patterns driven by bimodal East African rainfall
-- Detected ITN intervention effects (declining transmission amplitude with 0%→70% scale-up)
+-   **The benefit is in identifiability, not in raw predictive error.** Model A recovers the intercept $\alpha$ in 76% of replicates; Model B recovers it in **none** (0/50, bias $-1.92$). It also recovers the GP variance $\sigma^{2}$ in 52% of replicates against 0% for Model B, whose GP inflates to absorb the mechanistic signal it has been denied. By contrast, posterior-mean incidence RMSE differs by only about 1% between the two models — both fit the observed data well, but only Model A recovers the *parameters that generated it*.
+-   The **prevalence likelihood now depends on the latent incidence $I$** (via the detectability convolution), which **resolves the $\alpha$–$\gamma$ ridge**: $\alpha$ and $\gamma$ are recovered as separate, identifiable parameters rather than along a ridge.
+-   The mechanistic offset provides the transmission **shape**; the spatial GP + AR(1) provides the **residual correction**; the dual likelihood pins the **scale** ($\alpha$, $\gamma$).
+-   **What is not yet resolved:** the GP hyperparameters $\phi, \sigma^{2}, \theta$ do not mix (median $\widehat R$ 2.1–2.4 under Model A, up to 4.1 under Model B, across all 50 replicates). The prior predictive check attributes this to the simulation lengthscale, not to the model.
 
-The WITHOUT model collapsed to the grand mean (~207 cases) with no temporal structure, confirming that the mechanistic offset provides the essential "shape" while $\lambda$ provides the "scale".
+This supports the supervisor's two-stage design: **integrating vector data as a structural offset, with the residual modelled by a spatial GP + AR(1) under a dual likelihood, recovers the level of infection incidence — which case-only or covariate-only baselines cannot do at all.** The claim to make is about identifiability and interpretability; it is not a claim of large predictive gains, which the data do not support at this grid size.
 
-This validates the supervisor's two-stage approach: **integrating vector data as a structural offset dramatically improves both accuracy and precision**.
+## Case study (Mozambique; simple & illustrative)
 
-## Case study (Tanzania; simple & illustrative)
-
--   **Scope.** Country‑level demonstration with **public covariates** (MAP ITN/IRS layers, environmental rasters) and an available **monthly case** series; **low spatial resolution** (e.g., \~10km) for speed.
--   **Tweaks for Tz.** Use existing EpiWave **catchment/aggregation** options as needed; adopt a simple prevalence–incidence relationship; keep $b,c,r$ fixed.
--   **Fitting.** Run HMC with modest chains/iter until ESS & $\widehat R$ good; produce **posterior mean** and **uncertainty maps** for FOI/incidence.
--   **Counterfactuals.** Using posterior draws, compute maps for **no‑ITN/IRS** and **expanded ITN** scenarios (illustrative only).
+-   **Scope.** Country-level demonstration with **public covariates** (MAP ITN/IRS layers, environmental rasters) and the **Mozambique DHIS2** monthly case series from 2017 onward (DHS 2.0 era; data from earlier than 2017 is excluded); **low spatial resolution** ($\sim 10$ km) for the first pass.
+-   **Why Mozambique.** Two reasons. (i) Mozambique routine data is more stable than Angola's, where extreme incidence values destabilise the model fit (Punam Amratia, 30 March 2026). (ii) The 2023 MIS prevalence survey is already available, with the mini-MIS pending from Brad — both fit directly into the dual likelihood.
+-   **Inputs.** Routine cases ($C$): DHIS2 from 2017; population ($N$): WorldPop; survey prevalence ($Y$, $T$): MIS 2023 (and mini-MIS once released). Vector Atlas mosquito-abundance and adult-survival layers via Gerry Ryan; biting-rate layer pending the humidity-effects work in Vector Atlas.
+-   **Vector Atlas notation.** Vector Atlas yields the **product** $m \times a$, not the two factors separately (Nick Golding, 30 March 2026); for runs that need $a$ alone we use a literature value.
+-   **Fitting.** HMC with chains/iterations sized to clear burn-in ($\geq 2{,}000$ post-warmup samples per Punam's recommendation); $\widehat R$ and ESS reported; posterior mean and uncertainty maps for FOI/incidence.
+-   **Counterfactuals.** Using posterior draws, compute maps for **no-ITN/IRS** and **expanded-ITN** scenarios — illustrative use of the framework, not policy prescription.
 
 ## Software & reproducibility
 
--   **Code.** Repositories: `epiwave-foi-model` (this module) and `epiwave.mapping` (baseline mapping). Version, seeds, and package/session info recorded.
--   **Data.** Public layers cited in text; any restricted case data acknowledged and used per agreement.
+-   **Code.** Repositories: `epiwave-foi-model` (this module, current branch) and `epiwave.mapping` (baseline mapping framework from idem-lab). Version, seeds, and package/session info recorded with each run.
+-   **Stack.** R + `greta` + `greta.gp` + TensorFlow for Bayesian inference; `deSolve` for the Stage 1 ODE; `dplyr`, `tidyr`, `ggplot2` for data handling and plots. Packages are loaded individually rather than via `library(tidyverse)` because of a known segfault when `tidyverse` is loaded alongside `deSolve` on R 4.5.x for Windows.
+-   **TensorFlow / Python pinning.** The TensorFlow stack must be pinned (TensorFlow 2.16.2, TensorFlow Probability 0.24.0, `tf-keras` 2.16.0, `setuptools < 81`); the validated configuration is restored by sourcing `R/greta_setup.R` before any model script. This is captured in `CLAUDE.md` and reproduced verbatim there.
+-   **Data.** Public layers cited in text (Vector Atlas, MAP ITN / IRS, WorldPop). Restricted DHIS2 / MIS data acknowledged and used per the relevant data-sharing agreements.
 
 # Results
 
@@ -362,50 +409,23 @@ This validates the supervisor's two-stage approach: **integrating vector data as
 
 ## Simulation estimation study
 
-We validated the two-stage framework under a controlled simulation (10 sites, 49 months; ITN scale-up 0%→70%, 20% insecticide resistance; February 2026).
+We validated the two-stage framework under a controlled simulation-estimation
+study: 50 independently simulated datasets (10 sites × 48 months; ITN scale-up
+0% → 70% with 20% insecticide resistance), each fitted by both Model A (WITH the
+mechanistic offset) and Model B ($I^{\ast}=0$), and scored on how often the 95%
+credible interval contained the value used to simulate the data.
 
-### A. Parameter recovery
+This replaces the single-run results reported in March 2026. Three things
+changed between the two: the prevalence likelihood was rewritten against the
+latent incidence $I$ through the detectability convolution (Nick Golding); the
+intercept was centred and the sampling budget raised to 4 chains × 2,000
+post-warmup samples (Punam Amratia); and scoring moved from one run to 50
+replicates, so the headline quantity is now **coverage** — the fraction of
+replicates in which the truth was recovered — rather than a single point
+estimate.
 
-The log reporting rate was recovered with near-zero bias across both models:
-
-| Parameter | True | Estimated (WITH offset) | 95% CI |
-|---|---|---|---|
-| Reporting rate $e^\lambda$ | 0.1003 | 0.1003 | [0.0997, 0.1010] |
-
-The posterior standard deviation of $\lambda$ was 0.002 — the 490 observations constrain the reporting rate extremely tightly once the mechanistic offset provides the correct structural shape.
-
-### B. Predictive performance
-
-The mechanistic offset provides an 88% improvement in RMSE over a baseline model with no structural prior:
-
-| Metric | WITH offset | WITHOUT offset | Improvement |
-|---|---|---|---|
-| RMSE (cases) | 14.7 | 125.5 | **88%** |
-| RMSE / mean observed | 7.2% | 61.3% | — |
-| 95% CI width ($\lambda$) | 0.0013 | 0.0133 | **10×** |
-| NegBin size | ~240 (near-Poisson) | ~1.8 (heavy overdispersion) | — |
-| Reporting rate recovery | 0.1003 | — | Near-zero bias |
-
-The WITHOUT model predicts the global mean (~207 cases) for every site and time point (flat prediction); the WITH model tracks seasonal peaks and troughs by using the mechanistic $I^*$ as a structural offset. The 10× tighter credible intervals confirm that the mechanistic offset dramatically reduces inferential uncertainty — when the model knows the "shape" of transmission, it only needs to estimate the "scale".
-
-### C. MCMC convergence
-
-HMC converged cleanly for both parameters in the WITH offset model:
-
-| Parameter | $\hat{R}$ | ESS | Mean | SD |
-|---|---|---|---|---|
-| $\lambda$ (log_rate) | 1.004 | 1,095 | -2.30 | 0.002 |
-| $\log(\text{size})$ | 1.004 | 489 | 5.49 | 0.49 |
-
-The estimated size $\approx 240$ (near-Poisson) indicates that the mechanistic offset captures almost all systematic variation, leaving only near-Poisson noise. By contrast, the WITHOUT offset model estimated size $\approx 1.8$ (heavy overdispersion) — without structural temporal information, the NegBin must absorb all variation via overdispersion.
-
-The reparameterisation from $\phi \sim \text{Beta}(1,9)$ to $\log(\text{size}) \sim \mathcal{N}(3,1)$ was critical: the original parameterisation produced ESS = 82 for the overdispersion parameter due to boundary effects; the log-scale parameterisation improved this to ESS = 489.
-
-**Goal.** Show **why the new method works** vs. alternatives; **unpack** performance further (error, coverage, calibration).
-
-### A. Accuracy at site level (bar charts: Actual vs. Estimates)
-
--   **Bar charts** comparing **true** vs **estimated** FOI/incidence, aggregated over time (or end-of-period).
+Every number below is read directly from the canonical Workbench study object
+`outputs/sim_estimation_results.RData`; none are typed into the text.
 
 ```{r setup, message=FALSE, warning=FALSE}
 library(dplyr)
@@ -417,85 +437,236 @@ library(knitr)
 library(here)
 ```
 
-```{r results-bars-sim, eval=TRUE, message=FALSE, warning=FALSE}
-# Simulation-estimation study results — loaded from validated MCMC run
-# (cache/mcmc_results.rds, February 2026)
+```{r results-load, message=FALSE, warning=FALSE}
+# Multi-replicate study object produced by run_sim_estimation_study()
+# (see Methods). Tables below render directly from it.
+load(here::here("outputs/sim_estimation_results.RData"))  # exposes `study`
+meta <- study$meta
+```
 
-res_sim  <- readRDS(here::here("cache/mcmc_results.rds"))
-inp      <- res_sim$inputs
+The simulation-estimation results below are generated from a study of
+`r meta$n_reps` independent replicates (`r meta$n_sites` sites ×
+`r meta$n_times` months; `r meta$chains` chains × `r meta$n_samples`
+post-warmup samples; alpha-centred GP), run on `r meta$date`.
 
-obs_mat   <- inp$observed_cases          # [49 x 10]
-I_star    <- inp$mechanistic_prediction  # [49 x 10]
-true_inc  <- inp$true_incidence          # [49 x 10]
+#### A. Parameter recovery and credible-interval coverage (Model A vs Model B)
 
-# Posterior draws for log_rate
-draws_with    <- do.call(rbind, lapply(as.mcmc.list(res_sim$draws_with),    as.data.frame))
-draws_without <- do.call(rbind, lapply(as.mcmc.list(res_sim$draws_without), as.data.frame))
+The headline table is the **head-to-head**: the two models share the same GP +
+AR(1) structure, the same dual likelihood and the same data, and differ only in
+whether $\log(I^{\ast})$ is included. Coverage is the fraction of replicates
+whose 95% credible interval contained the truth.
 
-# Per-site mean predicted vs true (aggregate over time)
-site_results <- purrr::map_dfr(1:10, function(s) {
-  obs_s    <- obs_mat[, s]
-  Istar_s  <- I_star[, s]
-  true_s   <- true_inc[, s]
+```{r results-recovery, message=FALSE, warning=FALSE}
+rs <- study$recovery_summary
+rec <- merge(
+  subset(rs, model == "with",
+         select = c(param, true, bias, mean_ci_width, coverage)),
+  subset(rs, model == "without", select = c(param, bias, coverage)),
+  by = "param", suffixes = c("_A", "_B"))
+rec <- rec[match(c("alpha", "gamma_rr", "sigma2", "phi", "theta"), rec$param), ]
 
-  pred_with_draws    <- outer(exp(draws_with$log_rate),    Istar_s, "*")
-  pred_without_draws <- outer(exp(draws_without$log_rate), rep(mean(as.vector(I_star)), 49), "*")
+knitr::kable(rec, digits = 3, row.names = FALSE,
+  col.names = c("Parameter", "True", "Bias (A)", "Mean 95% CI width (A)",
+                "Coverage (A)", "Bias (B)", "Coverage (B)"),
+  caption = sprintf(paste("Parameter recovery across %d replicates.",
+    "Model A = WITH mechanistic offset; Model B = I* = 0 (standard geostatistical).",
+    "Coverage is the fraction of replicates whose 95%% CI contains the truth."),
+    meta$n_reps))
 
-  tibble(
-    site_id   = sprintf("S%02d", s),
-    truth     = mean(true_s),
-    vd_mean   = mean(colMeans(pred_with_draws)),
-    vd_lwr    = mean(apply(pred_with_draws, 2, quantile, 0.025)),
-    vd_upr    = mean(apply(pred_with_draws, 2, quantile, 0.975)),
-    base_mean = mean(colMeans(pred_without_draws)),
-    base_lwr  = mean(apply(pred_without_draws, 2, quantile, 0.025)),
-    base_upr  = mean(apply(pred_without_draws, 2, quantile, 0.975))
-  )
-})
+cov_a  <- function(p) rs$coverage[rs$model == "with"    & rs$param == p]
+cov_b  <- function(p) rs$coverage[rs$model == "without" & rs$param == p]
+bias_b <- function(p) rs$bias[rs$model == "without" & rs$param == p]
+```
 
-site_long <- site_results %>%
-  select(site_id, truth, vd_mean, base_mean) %>%
-  pivot_longer(-site_id, names_to = "model", values_to = "value") %>%
-  mutate(model = factor(model,
-    levels = c("truth", "vd_mean", "base_mean"),
-    labels = c("Truth", "WITH offset (VD-informed)", "WITHOUT offset (baseline)")))
+**The result that carries the paper.** The intercept $\alpha$ — the parameter
+that sets the overall level of infection incidence — is recovered in
+**`r sprintf("%.0f%%", 100 * cov_a("alpha"))`** of replicates by Model A and in
+**`r sprintf("%.0f%%", 100 * cov_b("alpha"))`** by Model B, which is biased by
+`r sprintf("%.2f", bias_b("alpha"))` on the log scale. Without the mechanistic
+offset the model has no anchor for the level of incidence: the GP can reproduce
+the observed *pattern* at any overall scale, so the level is unrecoverable. The
+vector information is what pins it down.
 
-ggplot(site_long, aes(site_id, value, fill = model)) +
-  geom_col(position = position_dodge(0.75), width = 0.7) +
-  scale_fill_manual(values = c("Truth"="black",
-                               "WITH offset (VD-informed)"="#2E75B6",
-                               "WITHOUT offset (baseline)"="#C00000")) +
-  labs(x = "Site", y = "Mean monthly cases", fill = "",
-       title = "Simulation: True vs Estimated incidence (10 sites)") +
+The reporting rate $\gamma$ is recovered at a similar rate either way
+(`r sprintf("%.0f%%", 100 * cov_a("gamma_rr"))` with the offset,
+`r sprintf("%.0f%%", 100 * cov_b("gamma_rr"))` without), as expected: the
+prevalence surveys inform $\gamma$ directly and do not need the offset to do so.
+
+The GP variance $\sigma^{2}$ shows the same story from the other side —
+`r sprintf("%.0f%%", 100 * cov_a("sigma2"))` coverage under Model A against
+`r sprintf("%.0f%%", 100 * cov_b("sigma2"))` under Model B, whose $\sigma^{2}$
+is biased upward by `r sprintf("%.2f", bias_b("sigma2"))`. Denied the
+mechanistic signal, Model B's GP inflates to absorb it. This is the quantitative
+form of Nick Golding's argument for keeping the GP as a *residual* model rather
+than the whole model.
+
+The identifiability figure: with prevalence now depending on $I$, the
+$\alpha$–$\gamma$ joint posterior is a blob rather than the diagonal ridge seen
+in the case-only / X-based formulation.
+
+```{r results-fig-identifiability, message=FALSE, warning=FALSE, fig.width=5.2, fig.height=4.2, fig.cap="alpha-gamma joint posterior (example replicate, Model A). Dashed lines mark the true values. A compact blob indicates the two parameters are separately identifiable; a tight diagonal band would indicate the unresolved ridge."}
+dw <- as.data.frame(study$example$with$draws)        # columns: alpha, gamma_rr, sigma2, phi, theta
+tp <- study$example$truth$true_params
+alpha_true_eff <- tp$alpha + mean(study$example$truth$epsilon_true_mat)  # centred intercept
+
+ggplot(dw, aes(alpha, gamma_rr)) +
+  geom_point(alpha = 0.15, size = 0.7, colour = "#2E75B6") +
+  geom_vline(xintercept = alpha_true_eff, linetype = "dashed", colour = "grey30") +
+  geom_hline(yintercept = tp$reporting_rate, linetype = "dashed", colour = "grey30") +
+  labs(title = "alpha-gamma joint posterior (Model A)",
+       x = expression(alpha~" (intercept)"),
+       y = expression(gamma~" (reporting rate)")) +
   theme_minimal(base_size = 11) +
-  theme(legend.position = "bottom")
+  theme(plot.title = element_text(face = "bold"))
 ```
 
-### B. Error, coverage, calibration (tailor-made to show *why* our method works)
-
-```{r results-metrics-sim, eval=TRUE}
-metrics <- site_results %>%
-  transmute(
-    site_id,
-    abs_err_vd   = abs(vd_mean - truth),
-    abs_err_base = abs(base_mean - truth),
-    rel_err_vd   = abs_err_vd  / pmax(truth, 1),
-    rel_err_base = abs_err_base / pmax(truth, 1)
-  )
-
-knitr::kable(
-  bind_rows(
-    metrics,
-    metrics %>% summarise(
-      site_id = "**Mean**",
-      across(where(is.numeric), mean))
-  ),
-  digits = 2,
-  caption = "Per-site absolute and relative errors (mean monthly cases)"
-)
+```{r results-fig-hyper, message=FALSE, warning=FALSE, fig.width=8, fig.height=3, fig.cap="GP hyperparameter posteriors for the example replicate (Model A); dashed red lines are the true values."}
+hyper <- tidyr::pivot_longer(dw[, c("sigma2", "phi", "theta")], dplyr::everything(),
+                             names_to = "param", values_to = "value")
+truth_h <- data.frame(param = c("sigma2", "phi", "theta"),
+                      value = c(tp$gp_sigma^2, tp$gp_phi, tp$gp_rho))
+ggplot(hyper, aes(value)) +
+  geom_density(fill = "#2E75B6", alpha = 0.4) +
+  geom_vline(data = truth_h, aes(xintercept = value), linetype = "dashed", colour = "#C00000") +
+  facet_wrap(~ param, scales = "free") +
+  labs(x = "Value", y = "Density") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold"))
 ```
 
--   **Unpack further:** add CRPS, PIT/coverage diagnostics, and show **per-site** performance tables.
+#### B. Predictive accuracy of the latent incidence surface (Model A vs Model B)
+
+```{r results-predictive, message=FALSE, warning=FALSE}
+ps <- study$predictive_summary
+ps$model <- ifelse(ps$model == "with", "Model A (WITH offset)", "Model B (I* = 0)")
+knitr::kable(ps[, c("model", "mean_rmse", "mean_mae", "mean_field_coverage")],
+  digits = 4, col.names = c("Model", "Mean RMSE", "Mean MAE", "Field coverage"),
+  caption = "Posterior-mean incidence accuracy vs the simulated truth, averaged over replicates.")
+
+rmse_with    <- ps$mean_rmse[grepl("Model A", ps$model)]
+rmse_without <- ps$mean_rmse[grepl("Model B", ps$model)]
+imp <- 100 * (1 - rmse_with / rmse_without)
+```
+
+Across replicates the vector-informed model (Model A) reduces posterior-mean
+incidence RMSE by **`r sprintf("%.1f%%", imp)`** relative to the $I^{\ast}=0$
+geostatistical baseline (`r sprintf("%.4f", rmse_with)` vs
+`r sprintf("%.4f", rmse_without)`), with field coverage of
+`r sprintf("%.2f", ps$mean_field_coverage[grepl("Model A", ps$model)])` against
+`r sprintf("%.2f", ps$mean_field_coverage[grepl("Model B", ps$model)])`.
+
+**This difference is small, and saying so matters.** Both models fit the
+observed data about equally well — a flexible GP can reproduce the incidence
+surface whether or not it is given the mechanistic offset, so predictive error
+is not where the two separate. They separate on *parameter recovery*: Model B
+matches the surface using a badly wrong intercept and an inflated GP variance,
+which is invisible in RMSE and fatal for anything that needs the level of
+incidence to mean something — reporting-rate estimation, intervention
+counterfactuals, or transferring the fit to a new setting. Reporting a large
+predictive gain here would overstate what this simulation shows; earlier drafts
+of this paper quoted an 88% RMSE reduction, which the 50-replicate study does
+not support.
+
+```{r results-fig-predictive, message=FALSE, warning=FALSE, fig.width=8, fig.height=4, fig.cap="Posterior-mean predicted vs true infection-incidence rate across all site-months (example replicate). Points on the dashed 1:1 line are perfect; Model A (WITH offset) should hug the line more tightly than Model B (I*=0)."}
+ti <- as.vector(study$example$truth$I_true_mat)
+pred_df <- rbind(
+  data.frame(truth = ti, pred = as.vector(study$example$with$pred_mean),
+             model = "Model A (WITH offset)"),
+  data.frame(truth = ti, pred = as.vector(study$example$without$pred_mean),
+             model = "Model B (I* = 0)"))
+ggplot(pred_df, aes(truth, pred)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(alpha = 0.30, size = 0.7, colour = "#2E7D32") +
+  facet_wrap(~ model) +
+  labs(x = "True incidence rate", y = "Posterior-mean predicted incidence") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold"))
+```
+
+#### C. MCMC convergence — narrowed to one problem
+
+```{r results-convergence, message=FALSE, warning=FALSE}
+conv <- subset(study$recovery_summary, model == "with",
+               select = c(param, median_rhat, median_ess, coverage))
+conv <- conv[match(c("alpha", "gamma_rr", "sigma2", "phi", "theta"), conv$param), ]
+knitr::kable(conv, digits = 3, row.names = FALSE,
+  col.names = c("Parameter", "Median Rhat", "Median ESS", "Coverage"),
+  caption = "Convergence (median across replicates) for Model A. Target Rhat < 1.05.")
+
+rh <- function(p) conv$median_rhat[conv$param == p]
+```
+
+$\widehat R$ compares the four chains: near 1 when they agree, above about 1.1
+when they have not settled on the same answer. After raising the budget to 4
+chains × 2,000 post-warmup samples, the two parameters the paper's argument
+rests on are in acceptable shape — $\alpha$ at
+$\widehat R = `r sprintf("%.2f", rh("alpha"))`$ and $\gamma$ at
+$\widehat R = `r sprintf("%.2f", rh("gamma_rr"))`$, with effective sample sizes
+in the hundreds.
+
+The three GP hyperparameters are not: $\phi$, $\sigma^{2}$ and $\theta$ sit at
+$\widehat R$ between `r sprintf("%.1f", min(rh("phi"), rh("sigma2"), rh("theta")))`
+and `r sprintf("%.1f", max(rh("phi"), rh("sigma2"), rh("theta")))` with effective
+sample sizes of a few dozen. Because this holds across **all 50 replicates**
+rather than one unlucky run, it is a structural problem, not sampling noise —
+and, importantly, it is a *different* problem from the $\alpha$–$\gamma$ ridge
+that the prevalence fix resolved. Longer chains fixed $\alpha$ and $\gamma$ and
+did nothing for these three. The prior predictive check below explains why.
+
+#### D. Prior predictive check — why the GP hyperparameters will not mix
+
+Following Punam Amratia's recommendation, we drew 500 parameter sets from the
+priors and pushed each through the model before fitting anything. The
+diagnostic that matters is the spatial correlation the drawn lengthscale implies
+at the largest inter-site distance.
+
+**Diagnosis.** On coordinates rescaled to the unit square, the study's
+simulation truth of $\phi = 3$ implies a correlation of **0.90** between the two
+farthest sites. Every pair of sites is then nearly perfectly correlated, the
+likelihood is essentially flat in $\phi$, and the lengthscale is unidentifiable
+no matter how long the chains run. The prior in force at the time compounded
+this: **36%** of its mass sat in the unidentifiable region ($\rho_{\min} > 0.8$).
+On this geometry, identifiable spatial structure requires $\phi$ below
+$\approx 1.0$.
+
+```{r ppc-before, echo=FALSE, out.width="90%", fig.cap="Prior predictive check, before the fix: 36% of the lengthscale prior sits where all sites are >80% correlated and phi cannot be identified."}
+knitr::include_graphics(here::here("outputs/prior_predictive/ppc_phi_correlation.png"))
+```
+
+```{r ppc-range, echo=FALSE, out.width="90%", fig.cap="Correlation at the largest inter-site distance as a function of the lengthscale. The simulation truth used in the reported study (phi = 3) sits deep in the flat, unidentifiable region."}
+knitr::include_graphics(here::here("outputs/prior_predictive/ppc_identifiable_range.png"))
+```
+
+**Response.** Two changes followed, both now in the code:
+
+1.  The $\phi$ prior was moved to $\mathrm{LogNormal}(-0.7,\,0.5)$ (median
+    $\approx 0.5$), which puts **0%** of its mass in the unidentifiable region.
+2.  The simulation default lengthscale was changed from $\phi = 3$ to
+    $\phi = 0.5$, which implies a minimum pairwise correlation of $0.11$ — i.e.
+    a truth the geometry can actually resolve.
+
+```{r ppc-after, echo=FALSE, out.width="90%", fig.cap="Prior predictive check after the fix: the lengthscale prior now sits entirely in the identifiable region."}
+knitr::include_graphics(here::here("outputs/prior_predictive_fixed/ppc_phi_correlation.png"))
+```
+
+**Status, stated plainly.** The 50-replicate study reported above was run on
+11 August, *before* these changes; it therefore carries the unidentifiable
+$\phi = 3$ truth, and its $\phi$, $\sigma^{2}$ and $\theta$ diagnostics should
+be read as a property of that simulation design rather than of the model. The
+$\alpha$ and $\gamma$ results are unaffected by this — they concern the offset
+and the dual likelihood, not the spatial kernel. **Re-running the study under
+$\phi = 0.5$ is the first item of outstanding work**, and until it is done no
+claim is made about recovering the GP hyperparameters.
+
+**One check the priors still fail.** The prior predictive run also shows that
+the priors imply implausibly high prevalence — a median of 0.97, with more than
+10% of prevalence cells saturating at $\approx 1$ in 83% of prior draws. The
+incidence scale implied by the joint prior is too high, so the $\alpha$ and
+$\sigma^{2}$ priors need tightening against realistic prevalence before the
+framework meets real data. This is an open item, not a resolved one.
+
+-   **Unpack further:** add CRPS and PIT diagnostics, a penalised-complexity
+    prior on $\phi$ (Simpson et al.), and per-site performance tables.
 
 ## Case study
 
@@ -575,121 +746,139 @@ ggplot(site_ts, aes(date, cases_mean)) +
 
 ## How it compares / extends
 
--   **Hybridisation** of a **mechanistic Ross–Macdonald kernel** (VD → FOI) with a **Negative Binomial residual structure** and **programmatic covariates** (ITNs/IRS, resistance, environment).
--   Extends case-only or coarse-covariate approaches by making $m(t,s),a(t,s),g(t,s)$ first-class, data-linked processes.
+-   **Hybridisation** of a mechanistic Ross–Macdonald kernel (VD → FOI) with a separable spatial GP + AR(1) residual structure under a dual likelihood (cases + prevalence), and with programmatic covariates (ITNs/IRS, resistance, environment) entering upstream of the ODE rather than at the statistical layer.
+-   Extends case-only or coarse-covariate approaches by making $m(t,s), a(t,s), g(t,s)$ first-class, data-linked processes that can carry intervention effects through to FOI maps with uncertainty.
+-   Sits alongside `epiwave.mapping` (idem-lab) — this paper is a vector-informed extension of that framework, sharing the spatial GP + AR(1) + dual-likelihood architecture and adding the Stage 1 mechanistic offset.
 
 ## Computational Innovation
 
-Our two-stage approach overcomes a fundamental computational barrier in mechanistic disease mapping:
+The two-stage approach decouples the computationally expensive part of the model (the ODE) from the inferential part (Stage 2):
 
 ### The Challenge
 
-Traditional approaches that jointly infer ODE parameters face: - **Sequential bottleneck:** Each MCMC iteration requires solving ODEs (25+ seconds) - **Infeasibility at scale:** 5,000 iterations × 25s = 35 hours per chain - **Poor parallelization:** MCMC is inherently sequential
+Joint inference on the ODE parameters $m, a, g$ would force the dynamics to be re-solved at every MCMC iteration — sequential, slow, and poorly parallelisable, with run-times that scale unmanageably as the number of pixels grows. Cluster-scale runs become infeasible long before a country-level grid is reached.
 
 ### Our Solution
 
-**Stage 1 (pre-computation):** Use external data sources (Vector Atlas) as **fixed inputs** rather than parameters to infer. Solve ODEs once per pixel in parallel.
+**Stage 1 (pre-computation):** treat Vector Atlas (and temperature- / humidity-driven covariate models) as **fixed inputs** rather than parameters to infer. Solve the Ross–Macdonald ODE once per pixel, in parallel; store $I^{\ast}_{s,t}$ as a raster stack for reuse.
 
-**Stage 2 (inference):** Bayesian inference on a lightweight Negative Binomial model with mechanistic offset. Only 2 parameters estimated via HMC — no ODE overhead.
+**Stage 2 (inference):** HMC on five Stage 2 hyperparameters ($\alpha, \gamma, \sigma^{2}, \phi, \theta$) plus the latent GP innovations and AR(1) residuals. The mechanistic prediction enters as a fixed log-offset, so Stage 2 is a **standard spatio-temporal geostatistical model** — well-studied, with mature scalability options (sparse GPs via inducing points, Block-Circulant Embedding, NNGP).
 
 ### Key Advantages
 
-1.  **Speed:** 1-2 hours (vs. 35+ hours for joint inference) — **17× faster**
-2.  **Scalability:** Trivially parallelizable; national-scale mapping feasible
-3.  **Modularity:** Update vector data without re-running inference
-4.  **Debuggability:** Simpler model with fewer moving parts
-5.  **Flexibility:** NegBin overdispersion absorbs residual variation; spatial random effects can be added in future
+1.  **No ODE solves during MCMC** — the dynamics cost is paid once.
+2.  **Modularity:** update Vector Atlas inputs (or swap mechanism for VCom-derived predictions) without re-running inference.
+3.  **Identifiability:** the dual likelihood — provided prevalence depends on $I$ rather than $X$ — separately identifies $\alpha$ and $\gamma$, which case-only models cannot do.
+4.  **Scalability route:** sparse GP with inducing points already wired up (`n_inducing = 40` default), with Block-Circulant Embedding and NNGP available as further options if needed.
+5.  **Interpretable contribution:** the framework localises the methodological novelty in the **biting-rate × ITN coverage × timing-of-biting** block of `apply_interventions()`, which Nick Golding identifies as the core PhD contribution — vector information is what lets the framework produce intervention-aware FOI maps that case-only mapping cannot.
 
-This makes the framework **operationally viable** for national malaria programs.
+This makes the framework **operationally viable** for national malaria programmes while retaining the spatial geostatistical structure needed to map departures from the mechanistic baseline.
 
 ## Policy
 
 -   **Data needs:** better **ento maps** (abundance/proxies), **bioassay resistance** time series, **micro-climate** survival surfaces; routine **case** time series with QA.
 -   **Timing/targeting guidance, uncertainty-aware:** FOI maps with **posterior intervals** to schedule **seasonal operations** and support **subnational tailoring**.
 -   **Subnational tailoring:** ward/pixel FOI for **local prioritisation**; allow **programme-specific constraints** (logistics, budgets).
--   **Practical next steps (Tanzania):** run a **mini-case at ward scale** and prepare an **operational hand-off** (e.g., dashboard exporting FOI & counterfactuals).
+-   **Practical next steps (Mozambique):** run a **mini-case at admin-2 scale** (DHIS2 routine cases plus the 2023 MIS prevalence under the dual likelihood) and prepare an **operational hand-off** (e.g., dashboard exporting FOI maps and ITN/IRS counterfactuals).
 -   **Rich outputs:** can make maps of **everything** — $m,a,g$, FOI, incidence, and **intervention counterfactuals** (observed / no interventions / full interventions).
 
 ## Limits
 
--   **Dependence on Vector Atlas quality:** Since $m,a,g$ are **fixed inputs** (not inferred), errors in Vector Atlas predictions propagate directly to FOI estimates. The NegBin overdispersion can absorb some noise, but systematic biases in entomological inputs will persist.
--   **Assumes fixed transmission parameters:** $b,c,r$ held constant; in reality these may vary with mosquito species, human immunity, and co-infections. Future work should explore sensitivity.
--   **Limited identifiability of intervention effects:** Without inferring $m,a,g$, we cannot separately estimate effects on abundance vs. biting vs. mortality from case data alone. Must rely on entomological studies for these pathways.
--   **Residual overdispersion interpretation:** The NegBin size parameter absorbs **all** deviations from the mechanistic model (data errors, model misspecification, missing covariates) into a single scalar — it cannot distinguish these sources. Future spatial extensions (INLA/SPDE) would allow spatially structured residuals.
--   **Level of technical ability of the user:** interpreting uncertainty maps and MCMC diagnostics may require **analyst support** for operational deployment.
+-   **GP hyperparameters do not mix, and the reported study cannot settle whether that is the model or the simulation.** Across all 50 replicates, $\phi$, $\sigma^{2}$ and $\theta$ sit at median $\widehat R$ between 2.1 and 2.4 under Model A (up to 4.1 under Model B), with effective sample sizes of a few dozen. The prior predictive check attributes this to the simulation design: the study's $\phi = 3$ on unit-square coordinates leaves every pair of sites 90% correlated, so the lengthscale is unidentifiable by construction. The prior and the simulation default have both been corrected ($\phi$ prior median $\approx 0.5$; simulation truth $\phi = 0.5$), but the study has not yet been re-run under them. Until it is, no claim is made about recovering the GP hyperparameters, and $\alpha$-recovery is the only parameter result the paper stands on. A penalised-complexity prior on $\phi$ (Simpson et al.) is the planned second line of defence.
+-   **Unrealistic prevalence-survey coverage.** The simulation places a survey at 30% of all site-months. David Duncan (Melbourne, 11 August 2026) noted this is far above what any real programme achieves, and the identifiability result depends on the prevalence stream. The study must be re-run with survey counts drawn from real MIS/DHS designs before the $\alpha$-recovery result can be claimed to transfer to practice.
+-   **The priors imply implausible prevalence.** The prior predictive check shows a median implied prevalence of 0.97, with saturation in most prior draws. The joint prior on $\alpha$ and $\sigma^{2}$ puts the incidence scale too high and needs tightening against realistic prevalence before fitting real data.
+-   **The predictive gain over the baseline is small.** Model A's incidence RMSE improves on the $I^{\ast}=0$ baseline by roughly 1%, not the 88% quoted in earlier drafts of this work. The case for the framework rests on parameter recovery and interpretability — the baseline fits the surface using an intercept that is wrong by nearly two log units — not on predictive accuracy at this grid size.
+-   **Dependence on Vector Atlas quality.** Since $m, a, g$ are **fixed inputs** (not inferred), errors in Vector Atlas predictions propagate directly into the mechanistic offset. The GP can absorb residual spatial variation but cannot correct systematic bias in the upstream layers. Vector Atlas currently identifies the product $m \times a$ rather than the two factors separately; for runs requiring $a$ alone we use a literature value.
+-   **Fixed transmission parameters.** $b, c, r$ are held constant; in reality these vary with mosquito species, human immunity, and co-infections. Sensitivity analyses are deferred to future work.
+-   **Limited identifiability of intervention effects.** Without inferring $m, a, g$, the framework cannot separately estimate intervention effects on abundance vs. biting vs. mortality from case data alone — these pathways depend on entomological evidence.
+-   **Small spatial grid.** All results are on 10 sites. That is enough to exercise the machinery and to make the identifiability point, but the GP is being asked to learn a spatial kernel from 45 pairwise distances. Conclusions about the spatial structure itself need a larger grid, which is also where the sparse-GP path starts to matter.
+-   **Notation discipline.** This paper uses $N_{l}$ for population at risk in the Poisson likelihood and $T_{l,t}$ for survey sample size in the Binomial likelihood — distinct symbols, deliberately, after Gerry Ryan flagged the previous shared $N$ symbol as a notation collision (30 March 2026). Earlier presentations of this work used $N$ for both quantities and should be read with this ambiguity in mind.
+-   **User capability.** Interpreting uncertainty maps and MCMC diagnostics may require analyst support for operational deployment.
 
 ## Future
 
--   **Richer temporal dynamics:** allow **lagged intervention effects**, **non-stationary seasonality**, and **dynamic** $b,c,r$.
--   **Multiple vectors:** species-specific $m^{(k)},a^{(k)},g^{(k)}$ with mixture FOI; integrate **behavioral shifts**.
--   **Pan-African scaling:** harmonised inputs and **efficient inference** (e.g., amortised or sparse methods) for continental runs.
--   **Tooling:** reproducible pipelines, **dashboards** for programme users, and **APIs** for periodic updates.
+-   **Richer temporal dynamics:** lagged intervention effects, non-stationary seasonality, and dynamic $b, c, r$.
+-   **Multiple vectors:** species-specific $m^{(k)}, a^{(k)}, g^{(k)}$ with mixture FOI; integrate behavioural shifts in host-seeking and resting.
+-   **Pan-African scaling:** harmonised inputs and efficient inference (sparse GPs already in place; Block-Circulant Embedding and NNGP available as further options) for continental runs.
+-   **Comparison with VCom.** VCom is a compartmental SIS model conceptually adjacent to Ross–Macdonald and is widely used for vector-control optimisation. A formal evaluation — what VCom does, what overlap it has with this framework, and a clear written justification for using Ross–Macdonald + GP residuals over VCom-derived predictions — is planned in `R/vcom_evaluation.md` and will be summarised in the next iteration of this paper. (Nick Golding, post-hackathon debrief, April 2026.)
+-   **Tooling:** reproducible pipelines, dashboards for programme users, and APIs for periodic updates.
 
 ## Review of Computational Strategies
 
-### Current Approach: Two-Stage with Fixed Parameters
+### Current Approach: Two-Stage (Fixed Mechanistic Offset + Spatial GP + AR(1) + Dual Likelihood)
 
--   **ODE solving:** Standard adaptive Runge-Kutta (`deSolve`); runs once per pixel
--   **Bayesian inference:** HMC/NUTS on offset model only (via `greta`)
--   **Advantages:** Simple, interpretable, operationally feasible
--   **Limitation:** Cannot update $m,a,g$ based on case data
+-   **ODE solving:** standard adaptive Runge–Kutta (`deSolve` in R), once per pixel before MCMC.
+-   **Bayesian inference:** HMC/NUTS via `greta` + `greta.gp`. Five Stage 2 hyperparameters plus latent GP innovations and AR(1) residuals.
+-   **Advantages:** mechanistic interpretability via the offset; spatially structured residuals via the GP; identifiability of $\alpha$ and $\gamma$ via the dual likelihood; modular updates of Vector Atlas inputs without re-running inference.
+-   **Limitation:** cannot update $m, a, g$ based on case data — relies on Vector Atlas / temperature- and humidity-driven covariate models for the entomological inputs.
 
 ### Alternative Approaches Considered
 
 | Approach | Description | Pros | Cons | Status |
 |----|----|----|----|----|
-| **Joint ODE inference** | MCMC on all parameters including $m,a,g$ | Fully coherent uncertainty | 17× slower; infeasible at scale | Rejected |
+| **Joint ODE inference** | MCMC on $m, a, g$ jointly with case data | Fully coherent uncertainty | Sequential ODE solves dominate cost; infeasible at country scale | Rejected |
+| **NegBin offset (no GP, no dual likelihood)** | $C \sim \mathrm{NegBin}$, $\log\mu = \lambda + \log I^{\ast}$ | Two parameters, fast | Cannot map spatial residuals; assumes mechanistic prediction is right (Nick Golding) | Rejected |
+| **3D product-kernel GP** $(\text{lon},\text{lat},t)$ | Single `gp()` call with 3D coords | Conceptually clean | Latent space = $S \times T$; 100% bad HMC transitions at every scale | Failed |
+| **Block-Circulant Embedding (BCB)** | FFT-based spatial GP via gridded kernel | Scales to large grids on regular lattices | Requires regular spatial lattice; less flexible at admin-2 boundaries | Available, future |
+| **Nearest-Neighbour GP (NNGP)** | Vecchia-style sparse approximation to GP | Scales linearly; arbitrary geometry | Implementation more involved; tuning required | Available, future |
 | **Neural emulation** | Train neural network to emulate ODE solver | Fast forward passes | Requires extensive training; black-box | Future work |
-| **Amortized inference** | Learn inverse map from data to parameters | Single forward pass | High upfront cost; limited by training data | Exploratory |
+| **Amortised inference** | Learn inverse map from data to parameters | Single forward pass | High upfront cost; limited by training data | Exploratory |
 | **Variational approximation** | Approximate posterior with simpler family | Faster than MCMC | Underestimates uncertainty | If speed critical |
 
 ### When to Extend Beyond Two-Stage
 
--   **Multiple vector species:** If species-specific $m,a,g$ inference needed from mixed case data
--   **Real-time updating:** Operational dashboards requiring sub-hour turnaround
--   **Adaptive interventions:** Closed-loop systems updating strategies based on predictions
--   **Continental scale:** Pan-African mapping with thousands of pixels
+-   **Multiple vector species:** if species-specific $m, a, g$ inference is needed from mixed case data.
+-   **Real-time updating:** operational dashboards requiring sub-hour turnaround.
+-   **Adaptive interventions:** closed-loop systems updating strategies based on predictions.
+-   **Continental scale:** pan-African mapping with thousands of pixels — NNGP or BCB likely required at that scale.
 
-For the current v1 focused on **Tanzania national mapping**, the two-stage approach provides the best balance of speed, interpretability, and operational feasibility.
+For the current v1 demonstration on **Mozambique**, the two-stage approach with sparse GP + AR(1) and dual likelihood provides the best balance of speed, interpretability, and identifiability.
 
 # Conclusion
 
--   **Take‑home (one sentence).**\
-    We deliver a **computationally efficient, vector‑informed FOI mapping framework** that uses Vector Atlas data to generate mechanistic predictions as offsets in a Bayesian geostatistical model, producing **policy‑ready FOI maps with quantified uncertainty** for national malaria programs.
+-   **Take-home (one sentence).**\
+    We deliver a **computationally efficient, vector-informed FOI mapping framework** in which Vector Atlas data feed a fixed Ross–Macdonald mechanistic prediction, the prediction enters Stage 2 as a log-offset, and a separable spatial GP + AR(1) residual under a Poisson + Binomial **dual likelihood** maps the departures — producing **policy-ready FOI maps with quantified uncertainty** for national malaria programmes.
 
 -   **What we contributed.**
 
-    -   **Two-stage framework** that decouples mechanistic prediction (using Vector Atlas $m,a,g$) from statistical inference, achieving 17× computational speedup.
-    -   **Mechanistic offset approach** where Ross-MacDonald dynamics inform the baseline, and Negative Binomial overdispersion captures residual variation — combining biological interpretability with computational tractability.
-    -   **Operational feasibility** for national-scale mapping: runs in hours instead of days, trivially parallelizable, and modular (update vector data without re-running inference).
-    -   **Demonstration** via simulation-estimation study showing that including vector information improves FOI/incidence recovery compared to pure geostatistical approaches.
+    -   **Two-stage framework** that decouples mechanistic prediction (using Vector Atlas $m, a, g$) from statistical inference. The ODE is solved once per pixel before MCMC; Stage 2 is a standard spatio-temporal geostatistical model with no ODE overhead during inference.
+    -   **Mechanistic-offset Stage 2** where Ross–Macdonald dynamics inform the baseline and a separable spatial GP + AR(1) residual maps departures from that baseline.
+    -   **Dual likelihood** (Poisson on cases + Binomial on prevalence) under which both observation streams depend on the GP-adjusted latent incidence $I$ — the structural condition that lets the intercept $\alpha$ and reporting rate $\gamma$ be separately identified.
+    -   **Biting-rate × ITN coverage × timing-of-biting** as the principal mechanism through which interventions enter the framework — this is where the methodological contribution localises.
+    -   **Demonstration** via a 50-replicate simulation-estimation study showing that the mechanistic offset is what makes the overall level of infection incidence recoverable at all.
 
 -   **What the evidence shows (this paper).**
 
-    -   **Simulation estimation study:** across **10 sites**, the VD‑informed model **recovers FOI/incidence and intervention effects** more reliably than a correlative baseline (truth vs. estimates; error/coverage).
-    -   **Case study (Tanzania):** generated **FOI/incidence maps with uncertainty** and simple **counterfactuals** (observed / **no interventions** / **full interventions**), demonstrating **timing/targeting** utility.
+    -   **Simulation-estimation study (50 replicates, 10 sites × 48 months, 4 chains × 2,000 post-warmup samples):** the WITH-offset model recovers the intercept $\alpha$ in 76% of replicates; the $I^{\ast}=0$ baseline recovers it in **none**, and its GP variance inflates to absorb the mechanistic signal it was denied (0% coverage, biased upward by 2.2). The reporting rate $\gamma$ is recovered at about three-quarters either way, since the prevalence surveys inform it directly. Predictive error is near-identical between the two models (≈1% RMSE difference) — the benefit is identifiability, not prediction.
+    -   **The $\alpha$–$\gamma$ ridge is resolved,** by writing the prevalence likelihood against the GP-adjusted incidence $I$ through the detectability convolution rather than against the mechanistic prevalence $X$.
+    -   **The remaining convergence problem is isolated and diagnosed:** $\phi$, $\sigma^{2}$ and $\theta$ do not mix, and the prior predictive check shows this is a property of the simulation's lengthscale ($\phi = 3$ leaves all sites 90% correlated), not of the model. Prior and simulation default are corrected; re-running the study is outstanding.
+    -   **Case study (Mozambique, not yet started):** routine DHIS2 cases from 2017, MIS 2023 prevalence, public Vector Atlas / MAP layers. The data is on the MAP Workbench and scoping is the next step.
 
 -   **Policy implications.**
 
-    -   Enables **subnational tailoring** and **seasonal scheduling** using **uncertainty‑aware** FOI layers.
-    -   Clarifies **data needs** (ento proxies, resistance time series, micro‑climate survival, routine cases with QA) for sustained operational use.
+    -   Enables subnational tailoring and seasonal scheduling using uncertainty-aware FOI layers.
+    -   Clarifies data needs (entomological proxies, resistance time series, micro-climate survival, routine cases with QA, prevalence surveys) for sustained operational use.
 
 -   **Limitations to keep in view.**
 
-    -   **Dependence on Vector Atlas accuracy:** Fixed $m,a,g$ means errors in upstream predictions propagate; NegBin overdispersion absorbs noise but cannot correct systematic biases.
-    -   **Assumptions in v1** (fixed $b,c,r$); future sensitivity analyses needed for these transmission parameters.
-    -   **No spatial residual structure:** Current NegBin model uses a single global overdispersion parameter; spatial random effects (INLA/SPDE) planned for production-scale extension.
+    -   **GP hyperparameters do not mix** (median $\widehat R$ 2.1–2.4 under Model A, up to 4.1 under Model B, across all 50 replicates); diagnosed as the simulation's unidentifiable lengthscale, corrected in code, study not yet re-run.
+    -   **Survey coverage of 30% is unrealistic** (David Duncan, Melbourne, 11 August 2026), and the identifiability result leans on the prevalence stream.
+    -   **The priors imply a median prevalence of 0.97,** so the incidence scale needs tightening before real data.
+    -   **The predictive gain is ≈1%, not 88%** — earlier drafts overstated this; the case rests on identifiability.
+    -   **Vector Atlas dependence:** fixed $m, a, g$ means errors in upstream predictions propagate; the GP can absorb residual spatial variation but cannot correct systematic bias.
+    -   **Fixed $b, c, r$;** sensitivity analyses deferred. All results are on a 10-site grid.
     -   **User capability:** interpreting uncertainty and MCMC diagnostics may require analyst support for operational use.
 
 -   **Immediate next steps.**
 
-    -   **Simulation-estimation study (completed):** Full MCMC on both models validated — 88% RMSE improvement, reporting rate recovered with near-zero bias (0.1003 vs true 0.10), clean convergence ($\hat{R} < 1.05$, ESS > 400).
-    -   **Tanzania case study:** Integrate real Vector Atlas v2 outputs for $m(t,s)$, apply temperature-dependent models for $a,g$, fit to DHIS2 monthly case data at district level.
-    -   **Sensitivity analyses:** Test robustness to assumptions about $b,c,r$; evaluate impact of Vector Atlas prediction errors via perturbation studies.
-    -   **Operational hand-off:** Package workflow as R package with documentation; create simple dashboard for generating FOI maps and intervention counterfactuals.
-    -   **IRS extension:** Add IRS coverage effects on $g$ where data available (e.g., Zanzibar).
-    -   **Code release:** Publish `epiwave-foi-model` repository with reproducible examples and tutorial.
+    -   **Re-run the 50-replicate study under $\phi = 0.5$** (and the corrected prior) and check whether $\phi$, $\sigma^{2}$ and $\theta$ then mix; add a penalised-complexity prior on $\phi$ if they do not.
+    -   **Re-run with realistic prevalence-survey numbers** drawn from real MIS/DHS designs, and confirm the $\alpha$-recovery result survives (David Duncan).
+    -   **Tighten the $\alpha$ / $\sigma^{2}$ priors** against plausible prevalence, using the prior predictive check as the acceptance criterion.
+    -   **Mozambique case study:** integrate Vector Atlas mosquito-abundance and adult-survival layers (request to Gerry Ryan, in flight); fit to DHIS2 monthly cases at district level; bring in MIS 2023 prevalence under the dual likelihood.
+    -   **Expand `apply_interventions()`** into a fuller biting-rate model — species composition × ITN coverage × net effectiveness × timing-of-biting (Nick Golding, post-hackathon debrief).
+    -   **VCom evaluation note** (`R/vcom_evaluation.md`) — what VCom does, why we are/aren't using it, and what it would take to swap mechanism modules in the framework.
+    -   **Code release:** publish `epiwave-foi-model` repository with reproducible examples and tutorial.
 
 -   **Looking ahead.**
 
-    -   Richer temporal dynamics (lags, non‑stationarity), species mixtures, and **pan‑African scaling** with harmonised inputs and reproducible pipelines.
+    -   Richer temporal dynamics (lags, non-stationarity), species mixtures, and pan-African scaling with harmonised inputs and reproducible pipelines.
