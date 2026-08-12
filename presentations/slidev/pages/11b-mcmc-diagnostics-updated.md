@@ -17,11 +17,11 @@ layout: default
 </div>
 
 <div class="p-2 rounded-lg bg-green-50 border border-green-300">
-<b>What now mixes.</b> After running 4 chains of 2000 iterations (Punam), α and γ have R-hat between 1.02 and 1.10, with 500–790 effective samples. Their mixing is fine.
+<b>What now mixes.</b> After running 4 chains of 2000 iterations (Punam), α and γ have R-hat between 1.02 and 1.12, with roughly 460–960 effective samples. Their mixing is fine.
 </div>
 
 <div class="p-2 rounded-lg bg-red-50 border border-red-300">
-<b>What does not.</b> The GP hyperparameters φ, σ² and θ still have R-hat between 2.2 and 3.7 across all 50 datasets. Because this holds over 50 datasets, it is a real mixing problem, not a one-run fluke.
+<b>What does not.</b> The GP hyperparameters φ, σ² and θ still have R-hat between 2.1 and 4.1 across all 50 datasets. Because this holds over 50 datasets, it is a real mixing problem, not a one-run fluke.
 </div>
 
 </div>
@@ -35,5 +35,5 @@ layout: default
 </div>
 
 <!--
-In March I put three questions on this slide about convergence. Here is where they stand. R-hat is a convergence check — it compares the separate MCMC chains, sits near one when they agree, and above about one point one when they have not settled on the same answer. After running four chains of two thousand iterations, which was Punam's suggestion, alpha and gamma now mix well — R-hat near one, healthy effective sample sizes. But the GP hyperparameters, phi, sigma-squared and theta, still do not, with R-hat between two point two and three point seven, and they do so across all fifty datasets, which tells me it is a real mixing problem rather than a one-run fluke. The cause is in the simulation design: with phi set to three on coordinates rescaled to a zero-to-one square, every pair of sites is more than eighty-six percent correlated, so the data genuinely cannot distinguish one lengthscale from another. More iterations cannot fix that. The plan is Punam's prior predictive check, and a penalised-complexity prior on phi.
+In March I put three questions on this slide about convergence. Here is where they stand. R-hat is a convergence check — it compares the separate MCMC chains, sits near one when they agree, and above about one point one when they have not settled on the same answer. After running four chains of two thousand iterations, which was Punam's suggestion, alpha and gamma now mix well — R-hat near one, healthy effective sample sizes. But the GP hyperparameters, phi, sigma-squared and theta, still do not, with R-hat between two point one and four point one, and they do so across all fifty datasets, which tells me it is a real mixing problem rather than a one-run fluke. The cause is in the simulation design: with phi set to three on coordinates rescaled to a zero-to-one square, every pair of sites is more than eighty-six percent correlated, so the data genuinely cannot distinguish one lengthscale from another. More iterations cannot fix that. The plan is Punam's prior predictive check, and a penalised-complexity prior on phi.
 -->

@@ -15,15 +15,15 @@ I simulated 50 datasets from the model, fitted both versions to each, and asked 
 <div class="col-span-2 text-xs flex flex-col gap-2">
 
 <div class="p-2 rounded-lg bg-gray-50 border border-gray-300">
-<b>What the plot means.</b> α is the intercept on the log-incidence scale, so it sets the overall level of infection incidence. Coverage is the fraction of the 50 datasets in which the 95% credible interval for a parameter contained the true value. "80% coverage for α" means the interval contained the true α in 40 of the 50 runs.
+<b>What the plot means.</b> α is the intercept on the log-incidence scale, so it sets the overall level of infection incidence. Coverage is the fraction of the 50 datasets in which the 95% credible interval for a parameter contained the true value. "76% coverage for α" means the interval contained the true α in 38 of the 50 runs.
 </div>
 
 <div class="p-2 rounded-lg bg-green-50 border border-green-300">
-<b>Main result.</b> The model recovers α in 80% of runs when it uses the vector offset I*, and in none of the runs when the offset is removed (I* = 0). The vector information is what lets the model recover the overall level of incidence.
+<b>Main result.</b> The model recovers α in 76% of runs when it uses the vector offset I*, and in none of the runs when the offset is removed (I* = 0). The vector information is what lets the model recover the overall level of incidence.
 </div>
 
 <div class="p-2 rounded-lg bg-blue-50 border border-blue-300">
-<b>Reporting rate γ.</b> γ is recovered in about 80% of runs either way, because the prevalence surveys inform it directly regardless of the offset.
+<b>Reporting rate γ.</b> γ is recovered in about three-quarters of runs either way (74% with the offset, 70% without), because the prevalence surveys inform it directly regardless of the offset.
 </div>
 
 </div>
@@ -37,5 +37,5 @@ I simulated 50 datasets from the model, fitted both versions to each, and asked 
 </div>
 
 <!--
-This replaces the single-run slide from March, and I have rewritten it so the terms are defined on the slide. Alpha is the intercept on the log-incidence scale — it sets the overall level of infection incidence. Coverage is the fraction of the fifty simulated datasets in which the ninety-five percent credible interval for a parameter contained the true value I used to simulate that dataset. So eighty percent coverage for alpha means that in forty of the fifty runs, the interval I estimated contained the true alpha. The plot shows this per parameter, green for the model with the vector offset and blue for the model without it. Alpha is recovered eighty percent of the time with the offset and zero percent without it — the vector information is what lets the model pin down the overall level of incidence. Gamma, the reporting rate, is recovered either way because the prevalence surveys inform it. The caveat David raised in Melbourne is that thirty percent prevalence-survey coverage is unrealistically high, so I need to re-run this with survey numbers taken from real prevalence data before claiming the result holds in practice.
+This replaces the single-run slide from March, and I have rewritten it so the terms are defined on the slide. Alpha is the intercept on the log-incidence scale — it sets the overall level of infection incidence. Coverage is the fraction of the fifty simulated datasets in which the ninety-five percent credible interval for a parameter contained the true value I used to simulate that dataset. So seventy-six percent coverage for alpha means that in thirty-eight of the fifty runs, the interval I estimated contained the true alpha. The plot shows this per parameter, green for the model with the vector offset and blue for the model without it. Alpha is recovered seventy-six percent of the time with the offset and zero percent without it — the vector information is what lets the model pin down the overall level of incidence. Gamma, the reporting rate, is recovered either way because the prevalence surveys inform it. The caveat David raised in Melbourne is that thirty percent prevalence-survey coverage is unrealistically high, so I need to re-run this with survey numbers taken from real prevalence data before claiming the result holds in practice.
 -->

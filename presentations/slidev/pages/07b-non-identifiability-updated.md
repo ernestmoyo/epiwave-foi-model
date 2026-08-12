@@ -32,7 +32,7 @@ The correction (Nick): the prevalence likelihood must depend on the modelled inc
 
 ### Result across 50 datasets
 
-With the offset, the model recovers α in 80% of the simulated datasets. Without it (I\* = 0), α is recovered in none of them.
+With the offset, the model recovers α in 76% of the simulated datasets. Without it (I\* = 0), α is recovered in none of them.
 
 Caveat (Melbourne, David): this used 30% survey coverage, which is unrealistically high — to be re-tested with real survey numbers.
 
@@ -47,5 +47,5 @@ Caveat (Melbourne, David): this used 30% survey coverage, which is unrealistical
 </div>
 
 <!--
-This is the slide that changed the most in substance, and I have rewritten it to talk about infection incidence rather than only cases, to match the earlier approach slide. The model treats case counts as a reporting fraction of infection incidence. With case counts alone, alpha the incidence intercept and gamma the reporting rate trade off exactly — you can raise one and lower the other and get identical case counts — so only their product is identifiable. In March I told you the dual likelihood had not fixed this and asked whether we needed more surveys. That was the wrong diagnosis. The prevalence likelihood was written against X, the mechanistic prevalence, which does not contain alpha, so it could never separate alpha from gamma. Nick's correction is to make prevalence depend on I, the modelled incidence, which does contain alpha. With that change the fifty-replicate study recovers alpha eighty percent of the time with the offset and never without it. The caveat David raised is that thirty percent survey coverage is unrealistically high, so I need to re-test with realistic survey numbers.
+This is the slide that changed the most in substance, and I have rewritten it to talk about infection incidence rather than only cases, to match the earlier approach slide. The model treats case counts as a reporting fraction of infection incidence. With case counts alone, alpha the incidence intercept and gamma the reporting rate trade off exactly — you can raise one and lower the other and get identical case counts — so only their product is identifiable. In March I told you the dual likelihood had not fixed this and asked whether we needed more surveys. That was the wrong diagnosis. The prevalence likelihood was written against X, the mechanistic prevalence, which does not contain alpha, so it could never separate alpha from gamma. Nick's correction is to make prevalence depend on I, the modelled incidence, which does contain alpha. With that change the fifty-replicate study recovers alpha seventy-six percent of the time with the offset and never without it. The caveat David raised is that thirty percent survey coverage is unrealistically high, so I need to re-test with realistic survey numbers.
 -->
