@@ -529,17 +529,27 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop,
   n_sites <- ncol(observed_cases)
 
   # --- Priors ---
-  # NOTE (Aug 2026): making phi identifiable (prior median ~0.5, true 0.5) broke
-  # MCMC mixing badly. The Workbench check traced this to a variance ridge between
-  # sigma2 and theta (the AR(1) marginal variance is roughly sigma2 / (1 - theta^2),
-  # so the two trade off), with theta having a flat prior that pins nothing. That is
-  # a separate problem from phi. Reverted to the working config (phi median 1.65,
-  # true 3.0). The next fix is to reparameterise that ridge and put a prior on theta.
+  # The GP shape parameters would not converge (R-hat 2-4). The Workbench check
+  # traced this to a variance ridge: the AR(1) marginal variance is roughly
+  # sigma2 / (1 - theta^2), so the innovation variance sigma2 and the correlation
+  # theta both drive the one quantity the data can see, and they trade off along a
+  # ridge. theta also had a flat prior (a bare bounded variable), so nothing pinned
+  # it along that ridge.
+  #
+  # Two-part fix:
+  #   (1) Reparameterise. Sample the marginal variance tau2 directly, since that is
+  #       what the data informs, and derive the innovation variance sigma2 from it.
+  #       This collapses the ridge because tau2 no longer trades off with theta.
+  #   (2) Put a proper Beta(2, 2) prior on theta in place of the flat prior, which
+  #       keeps it away from 0 and 1 and gives the sampler something to pin.
+  # sigma2 stays the quantity scored against the truth (the innovation variance),
+  # so the recovery table is unchanged.
   alpha     <- normal(0, 1)                                    # intercept
   gamma_rr  <- normal(0.1, 0.05, truncation = c(0.001, Inf))  # reporting rate
-  sigma2    <- lognormal(-0.5, 0.5)                            # GP variance
+  tau2      <- lognormal(-0.5, 0.5)                            # marginal variance of the field
+  theta     <- beta(2, 2)                                      # AR(1) correlation, proper prior
+  sigma2    <- tau2 * (1 - theta ^ 2)                          # innovation variance (derived)
   phi       <- lognormal(0.5, 0.5)                             # spatial lengthscale
-  theta     <- variable(lower = 0, upper = 1)                  # AR(1) temporal correlation
 
   # --- Spatial GP + AR(1) temporal (epiwave.mapping pattern) ---
   K_space <- build_gp_kernel(phi, sigma2)

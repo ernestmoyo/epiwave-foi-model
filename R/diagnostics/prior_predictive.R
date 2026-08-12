@@ -21,17 +21,20 @@ suppressPackageStartupMessages({
 # --- Priors, exactly as declared in fit_epiwave_gp() ---------------------------
 # alpha  ~ normal(0, 1)
 # gamma  ~ normal(0.1, 0.05) truncated to (0.001, Inf)
-# sigma2 ~ lognormal(-0.5, 0.5)
-# phi    ~ lognormal(0.5, 0.5)   (working config; median ~1.65)
-# theta  ~ uniform(0, 1)
+# tau2   ~ lognormal(-0.5, 0.5)   (marginal variance of the field)
+# theta  ~ beta(2, 2)             (AR(1) correlation)
+# sigma2 = tau2 * (1 - theta^2)   (innovation variance, derived)
+# phi    ~ lognormal(0.5, 0.5)    (working config; median ~1.65)
 draw_priors <- function(n) {
   rtnorm <- function(n, m, s, lo) { x <- rnorm(n, m, s); x[x < lo] <- lo; x }
+  tau2  <- rlnorm(n, -0.5, 0.5)
+  theta <- rbeta(n, 2, 2)
   data.frame(
     alpha  = rnorm(n, 0, 1),
     gamma  = rtnorm(n, 0.1, 0.05, 0.001),
-    sigma2 = rlnorm(n, -0.5, 0.5),
+    sigma2 = tau2 * (1 - theta ^ 2),   # derived innovation variance
     phi    = rlnorm(n, 0.5, 0.5),
-    theta  = runif(n, 0, 1)
+    theta  = theta
   )
 }
 
