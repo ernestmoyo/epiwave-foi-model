@@ -56,7 +56,7 @@ This implements the supervisor's recommended two-stage approach:
 -   **Two-stage approach:** (1) Use **fixed** $m,a,g$ from Vector Atlas to solve Ross–Macdonald ODEs **once per pixel**, generating a mechanistic infection-incidence rate $I^{\ast}_{s,t} = m_{s,t}\,a_{s,t}\,b\,z_{s,t}$; (2) Model latent infection incidence in space and time as $\log(I_{s,t}) = \alpha + \log(I^{\ast}_{s,t}) + \varepsilon_{s,t}$, with $\varepsilon_{s,t}$ a separable spatial Gaussian process (GP) plus AR(1) temporal correlation, and fit jointly to routine case counts and infection-prevalence surveys via a **dual likelihood** (Poisson + Binomial).
 -   **Key advantage:** No inference on the ODE parameters — the mechanistic prediction enters as a fixed log-offset, so the dynamics are solved once per location rather than at every MCMC iteration. The GP captures spatial residuals where the mechanistic prediction is wrong; the dual likelihood makes the intercept $\alpha$ and reporting rate $\gamma$ separately identifiable.
 
-### REQUIRED APPROACH (Supervisor Specification - Verbatim Implementation)
+### REQUIRED APPROACH (Supervisor Specs)
 
 The code implements the following supervisor guidance:
 
@@ -72,21 +72,21 @@ The code implements the following supervisor guidance:
 
 **How this is implemented (v8, current):**
 
-- ✅ **No inference on $m, a, g$:** all entomological parameters are fixed inputs (Vector Atlas / temperature- and humidity-driven relationships).
-- ✅ **ODE solve ONCE per pixel:** `solve_ross_macdonald_multi_site()` solves the ODEs once before MCMC, not during it.
-- ✅ **Mechanistic prediction $I^{\ast}$:** `compute_mechanistic_prediction()` returns $I^{\ast} = m \times a \times b \times z$ as an infection-incidence **rate** (no population multiplier; population enters the Poisson likelihood separately).
-- ✅ **Offset model:** $\log(I_{s,t}) = \alpha + \log(I^{\ast}_{s,t}) + \varepsilon_{s,t}$.
-- ✅ **Residual structure:** spatial GP innovations (Matérn 5/2) plus AR(1) temporal correlation — separable space–time decomposition matching `epiwave.mapping`.
-- ✅ **Dual likelihood:** Poisson on routine cases and Binomial on infection-prevalence surveys; both depend on $I_{s,t}$ (the GP-adjusted latent incidence), making the intercept $\alpha$ and reporting rate $\gamma$ separately identifiable. The prevalence link is the `epiwave.mapping` **detectability convolution**, $p = 1-\exp(-(IC))$ — not the mechanistic ODE prevalence $X$. This was the outstanding fix from the 30 March 2026 supervisor meeting and it has now landed.
-- ✅ **Prior predictive checks:** implemented in `R/diagnostics/prior_predictive.R` (Punam Amratia's recommendation), and already used to correct the spatial-lengthscale prior.
-- ✅ **Intervention effects:** `apply_interventions()` modifies $m, a, g$ upstream of the ODE — biting rate × ITN coverage × timing-of-biting is the principal mechanism through which interventions enter the framework.
-- ✅ **Sparse GP ready:** inducing-point sparse approximation (`n_inducing = 40` default) is wired in for larger spatial domains.
+- **No inference on $m, a, g$:** all entomological parameters are fixed inputs (Vector Atlas / temperature- and humidity-driven relationships).
+- **ODE solve ONCE per pixel:** `solve_ross_macdonald_multi_site()` solves the ODEs once before MCMC, not during it.
+-  **Mechanistic prediction $I^{\ast}$:** `compute_mechanistic_prediction()` returns $I^{\ast} = m \times a \times b \times z$ as an infection-incidence **rate** (no population multiplier; population enters the Poisson likelihood separately).
+-  **Offset model:** $\log(I_{s,t}) = \alpha + \log(I^{\ast}_{s,t}) + \varepsilon_{s,t}$.
+-  **Residual structure:** spatial GP innovations (Matérn 5/2) plus AR(1) temporal correlation — separable space–time decomposition matching `epiwave.mapping`.
+-  **Dual likelihood:** Poisson on routine cases and Binomial on infection-prevalence surveys; both depend on $I_{s,t}$ (the GP-adjusted latent incidence), making the intercept $\alpha$ and reporting rate $\gamma$ separately identifiable. The prevalence link is the `epiwave.mapping` **detectability convolution**, $p = 1-\exp(-(IC))$ — not the mechanistic ODE prevalence $X$.
+-  **Prior predictive checks:** implemented in `R/diagnostics/prior_predictive.R` (Punam Amratia's recommendation), and already used to correct the spatial-lengthscale prior.
+-  **Intervention effects:** `apply_interventions()` modifies $m, a, g$ upstream of the ODE — biting rate × ITN coverage × timing-of-biting is the principal mechanism through which interventions enter the framework.
+-  **Sparse GP ready:** inducing-point sparse approximation (`n_inducing = 40` default) is wired in for larger spatial domains.
 
 -   **Simulation estimation study**
     -   *(Currently the primary validation route.)*
     -   Goal: recover $\alpha$, $\gamma$, GP variance $\sigma^{2}$, lengthscale $\phi$, and AR(1) correlation $\theta$ when data are simulated from known $m(t,s), a(t,s), g(t,s)$ and intervention scenarios. Compare a model that uses $I^{\ast}$ as an offset against the standard geostatistical baseline ($I^{\ast} = 0$).
 -   **Case study**
-    -   **Mozambique** (DHIS2 routine cases from 2017 onwards; 2023 MIS prevalence survey; mini-MIS pending). Public covariates only (MAP ITN/IRS layers, environmental rasters). **As simple as possible, as complicated as necessary** to illustrate the workflow. Mozambique is preferred over Angola for the demonstration because Angolan incidence has extreme values that destabilise the model fit (Punam Amratia, supervisor meeting, 30 March 2026).
+    -   **Mozambique** (DHIS2 routine cases from 2017 onwards; 2023 MIS prevalence survey; mini-MIS pending). Public covariates only (MAP ITN/IRS layers, environmental rasters). **As simple as possible, as complicated as necessary** to illustrate the workflow. Mozambique is preferred over Angola for the demonstration because Angolan incidence has extreme values that destabilise the model fit (March 2026).
 
 ## Model Description
 
