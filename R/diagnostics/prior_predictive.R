@@ -22,7 +22,7 @@ suppressPackageStartupMessages({
 # alpha  ~ normal(0, 1)
 # gamma  ~ normal(0.1, 0.05) truncated to (0.001, Inf)
 # sigma2 ~ lognormal(-0.5, 0.5)
-# phi    ~ lognormal(-0.7, 0.5)   (median ~0.5; domain-aware, identifiable range)
+# phi    ~ lognormal(0.5, 0.5)   (working config; median ~1.65)
 # theta  ~ uniform(0, 1)
 draw_priors <- function(n) {
   rtnorm <- function(n, m, s, lo) { x <- rnorm(n, m, s); x[x < lo] <- lo; x }
@@ -30,7 +30,7 @@ draw_priors <- function(n) {
     alpha  = rnorm(n, 0, 1),
     gamma  = rtnorm(n, 0.1, 0.05, 0.001),
     sigma2 = rlnorm(n, -0.5, 0.5),
-    phi    = rlnorm(n, -0.7, 0.5),
+    phi    = rlnorm(n, 0.5, 0.5),
     theta  = runif(n, 0, 1)
   )
 }
