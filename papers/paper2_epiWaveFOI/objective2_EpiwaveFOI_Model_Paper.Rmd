@@ -233,8 +233,8 @@ We **do not infer** the ODE parameters. The Bayesian model has five inferred hyp
 | Intercept $\alpha$ | $\mathcal{N}(0,\,1)$ | Log-scale shift between the mechanistic prediction and the latent incidence rate; unit scale is weakly informative on the log scale. |
 | Reporting rate $\gamma$ | $\mathcal{N}(0.1,\,0.05)$ truncated to $(0.001,\infty)$ | Centred on a 10% reporting fraction, consistent with routine-surveillance completeness in the literature; truncation keeps it positive. Coded as `gamma_rr` to avoid masking `greta::gamma()`. |
 | GP variance $\sigma^{2}$ | $\mathrm{LogNormal}(-0.5,\,0.5)$ | Median $\approx 0.61$ on the log-incidence variance scale — allows residual spatial structure without letting the GP absorb the whole signal. |
-| Spatial lengthscale $\phi$ | $\mathrm{LogNormal}(-0.7,\,0.5)$ | **Domain-aware.** Coordinates are rescaled to the unit square, so lengthscales above $\approx 1$ make every pair of sites more than 80% correlated and $\phi$ becomes unidentifiable. The prior median was moved from $1.65$ to $\approx 0.5$ on the evidence of the prior predictive check (below). |
-| AR(1) correlation $\theta$ | $\mathrm{Uniform}(0,1)$ | Flat over the admissible range of temporal persistence. |
+| Spatial lengthscale $\phi$ | $\mathrm{LogNormal}(0.5,\,0.5)$ (median $\approx 1.65$) | The *working* configuration. Coordinates are rescaled to the unit square, so lengthscales above $\approx 1$ make every pair of sites more than 80% correlated and $\phi$ becomes unidentifiable — 36% of this prior's mass sits there. A domain-aware alternative with median $\approx 0.5$ was tried and reverted; see below. |
+| AR(1) correlation $\theta$ | $\mathrm{Uniform}(0,1)$ | Flat over the admissible range. This is a known weakness: $\theta$ trades off against $\sigma^{2}$ through the AR(1) marginal variance and the flat prior pins nothing. See the variance-ridge discussion below. |
 
 Note on identifiability: separately identifying $\alpha$ and $\gamma$ requires the dual likelihood **and** the prevalence stream being written against $I$; with cases alone, or with prevalence written against $X$, the model only identifies $\gamma\, e^{\alpha}$ (Nick Golding, 30 March 2026). The truncated-Normal prior on $\gamma$ replaced an earlier Beta specification: it puts mass where malaria reporting fractions actually sit without the boundary behaviour a Beta prior produced in the tails.
 
@@ -347,7 +347,7 @@ study <- run_sim_estimation_study(
 
 Two design settings carry caveats that are load-bearing for how the results should be read:
 
--   **Spatial lengthscale.** The 11 August study used $\phi = 3$ on unit-square coordinates. The prior predictive check (run afterwards, 12 August) shows this implies a correlation of $0.90$ between the two farthest sites — i.e. the truth was placed *inside* the unidentifiable region. The simulation default has since been changed to $\phi = 0.5$ (min correlation $0.11$), but **the reported study has not yet been re-run under it**. This is the single most important qualification on the GP-hyperparameter results below.
+-   **Spatial lengthscale.** The study uses $\phi = 3$ on unit-square coordinates. The prior predictive check (run afterwards, 12 August) shows this implies a correlation of $0.90$ between the two farthest sites — i.e. the truth sits *inside* the unidentifiable region, which is why $\phi$ cannot be recovered. Setting $\phi = 0.5$ makes the lengthscale identifiable but breaks sampling outright; the model is therefore retained at $\phi = 3$ and the GP-hyperparameter results below should be read as uninformative about $\phi$ rather than as a recovery failure. See the variance-ridge discussion in Results.
 -   **Survey coverage.** `simulate_prevalence_surveys()` defaults to `survey_fraction = 0.3` with sample sizes drawn from 50–200, i.e. a prevalence survey at 30% of all site-months. David Duncan flagged in Melbourne (11 August 2026) that this is far more survey coverage than any real programme has, so the identifiability result needs re-testing against survey numbers taken from real prevalence data before it can be claimed to hold in practice.
 
 ### Model Comparison
@@ -637,26 +637,50 @@ knitr::include_graphics(here::here("outputs/prior_predictive/ppc_phi_correlation
 knitr::include_graphics(here::here("outputs/prior_predictive/ppc_identifiable_range.png"))
 ```
 
-**Response.** Two changes followed, both now in the code:
+**The attempted fix, and why it was reverted.** Two changes followed the
+diagnosis: the $\phi$ prior was moved to $\mathrm{LogNormal}(-0.7,\,0.5)$
+(median $\approx 0.5$), which puts **0%** of its mass in the unidentifiable
+region, and the simulation lengthscale was moved from $\phi = 3$ to
+$\phi = 0.5$ (minimum pairwise correlation $0.11$) — a truth the geometry can
+resolve.
 
-1.  The $\phi$ prior was moved to $\mathrm{LogNormal}(-0.7,\,0.5)$ (median
-    $\approx 0.5$), which puts **0%** of its mass in the unidentifiable region.
-2.  The simulation default lengthscale was changed from $\phi = 3$ to
-    $\phi = 0.5$, which implies a minimum pairwise correlation of $0.11$ — i.e.
-    a truth the geometry can actually resolve.
-
-```{r ppc-after, echo=FALSE, out.width="90%", fig.cap="Prior predictive check after the fix: the lengthscale prior now sits entirely in the identifiable region."}
+```{r ppc-after, echo=FALSE, out.width="90%", fig.cap="The identifiable-phi configuration that was tried: the lengthscale prior sits entirely in the identifiable region. This configuration was reverted because it broke sampling."}
 knitr::include_graphics(here::here("outputs/prior_predictive_fixed/ppc_phi_correlation.png"))
 ```
 
-**Status, stated plainly.** The 50-replicate study reported above was run on
-11 August, *before* these changes; it therefore carries the unidentifiable
-$\phi = 3$ truth, and its $\phi$, $\sigma^{2}$ and $\theta$ diagnostics should
-be read as a property of that simulation design rather than of the model. The
-$\alpha$ and $\gamma$ results are unaffected by this — they concern the offset
-and the dual likelihood, not the spatial kernel. **Re-running the study under
-$\phi = 0.5$ is the first item of outstanding work**, and until it is done no
-claim is made about recovering the GP hyperparameters.
+Making $\phi$ identifiable did not improve sampling — it destroyed it. On the
+Workbench the identifiable-$\phi$ configuration produced $\widehat R$ between
+**30 and 80** with effective sample sizes around **7**, across both dense and
+sparse GP configurations: far worse than the problem being fixed. Both changes
+were therefore reverted and the model runs at $\phi = 3$ with the
+$\mathrm{LogNormal}(0.5,\,0.5)$ prior, which keeps it sampleable and reproduces
+the 50-replicate result reported above.
+
+**The actual cause: a $\sigma^{2}$–$\theta$ variance ridge.** Chasing the
+collapse down identified a different structural problem. The marginal variance
+of the AR(1) process is approximately
+
+$$
+\mathrm{Var}(\varepsilon) \;\approx\; \frac{\sigma^{2}}{1-\theta^{2}},
+$$
+
+so $\sigma^{2}$ and $\theta$ trade off along a ridge: many pairs imply the same
+residual field variance, and the data constrain the combination far better than
+either component. With $\theta \sim \mathrm{Uniform}(0,1)$ pinning nothing, the
+sampler is free to drift along that ridge. This is what the $\widehat R$ values
+for $\sigma^{2}$ and $\theta$ have been reflecting — not the lengthscale. Fixing
+$\phi$ removed the one constraint that had been incidentally limiting the
+drift, which is why identifiability made mixing worse rather than better.
+
+**Status, stated plainly.** The prior predictive check earned its place: it was
+right that $\phi$ is unidentifiable at $\phi = 3$, and acting on that finding is
+what exposed the deeper ridge. But the GP hyperparameters remain unrecovered,
+and the paper makes no claim otherwise. The $\alpha$ and $\gamma$ results are
+untouched by all of this — they turn on the mechanistic offset and the dual
+likelihood, not on the spatial kernel, which is why reverting to $\phi = 3$
+preserves them intact. **The outstanding work is to reparameterise the
+$\sigma^{2}$–$\theta$ ridge and put an informative prior on $\theta$**, not to
+re-run under a different lengthscale.
 
 **One check the priors still fail.** The prior predictive run also shows that
 the priors imply implausibly high prevalence — a median of 0.97, with more than
@@ -665,8 +689,9 @@ incidence scale implied by the joint prior is too high, so the $\alpha$ and
 $\sigma^{2}$ priors need tightening against realistic prevalence before the
 framework meets real data. This is an open item, not a resolved one.
 
--   **Unpack further:** add CRPS and PIT diagnostics, a penalised-complexity
-    prior on $\phi$ (Simpson et al.), and per-site performance tables.
+-   **Unpack further:** add CRPS and PIT diagnostics, a non-centred
+    reparameterisation of the $\sigma^{2}$–$\theta$ ridge with an informative
+    $\theta$ prior, and per-site performance tables.
 
 ## Case study
 
@@ -784,7 +809,7 @@ This makes the framework **operationally viable** for national malaria programme
 
 ## Limits
 
--   **GP hyperparameters do not mix, and the reported study cannot settle whether that is the model or the simulation.** Across all 50 replicates, $\phi$, $\sigma^{2}$ and $\theta$ sit at median $\widehat R$ between 2.1 and 2.4 under Model A (up to 4.1 under Model B), with effective sample sizes of a few dozen. The prior predictive check attributes this to the simulation design: the study's $\phi = 3$ on unit-square coordinates leaves every pair of sites 90% correlated, so the lengthscale is unidentifiable by construction. The prior and the simulation default have both been corrected ($\phi$ prior median $\approx 0.5$; simulation truth $\phi = 0.5$), but the study has not yet been re-run under them. Until it is, no claim is made about recovering the GP hyperparameters, and $\alpha$-recovery is the only parameter result the paper stands on. A penalised-complexity prior on $\phi$ (Simpson et al.) is the planned second line of defence.
+-   **GP hyperparameters do not mix, and the reported study cannot settle whether that is the model or the simulation.** Across all 50 replicates, $\phi$, $\sigma^{2}$ and $\theta$ sit at median $\widehat R$ between 2.1 and 2.4 under Model A (up to 4.1 under Model B), with effective sample sizes of a few dozen. The prior predictive check showed the study's $\phi = 3$ leaves every pair of sites 90% correlated, so the lengthscale is unidentifiable by construction — but correcting it ($\phi = 0.5$) collapsed sampling entirely ($\widehat R$ 30–80, ESS $\approx 7$), which exposed the real problem: a variance ridge between $\sigma^{2}$ and $\theta$ through the AR(1) marginal variance $\sigma^{2}/(1-\theta^{2})$, with a flat $\theta$ prior pinning nothing. The model is therefore retained at $\phi = 3$, which keeps it sampleable and preserves the $\alpha$ result. No claim is made about recovering the GP hyperparameters, and $\alpha$-recovery is the only parameter result the paper stands on. The fix is to reparameterise the ridge and put an informative prior on $\theta$.
 -   **Unrealistic prevalence-survey coverage.** The simulation places a survey at 30% of all site-months. David Duncan (Melbourne, 11 August 2026) noted this is far above what any real programme achieves, and the identifiability result depends on the prevalence stream. The study must be re-run with survey counts drawn from real MIS/DHS designs before the $\alpha$-recovery result can be claimed to transfer to practice.
 -   **The priors imply implausible prevalence.** The prior predictive check shows a median implied prevalence of 0.97, with saturation in most prior draws. The joint prior on $\alpha$ and $\sigma^{2}$ puts the incidence scale too high and needs tightening against realistic prevalence before fitting real data.
 -   **The predictive gain over the baseline is small.** Model A's incidence RMSE improves on the $I^{\ast}=0$ baseline by roughly 1%, not the 88% quoted in earlier drafts of this work. The case for the framework rests on parameter recovery and interpretability — the baseline fits the surface using an intercept that is wrong by nearly two log units — not on predictive accuracy at this grid size.
@@ -851,7 +876,7 @@ For the current v1 demonstration on **Mozambique**, the two-stage approach with 
 
     -   **Simulation-estimation study (50 replicates, 10 sites × 48 months, 4 chains × 2,000 post-warmup samples):** the WITH-offset model recovers the intercept $\alpha$ in 76% of replicates; the $I^{\ast}=0$ baseline recovers it in **none**, and its GP variance inflates to absorb the mechanistic signal it was denied (0% coverage, biased upward by 2.2). The reporting rate $\gamma$ is recovered at about three-quarters either way, since the prevalence surveys inform it directly. Predictive error is near-identical between the two models (≈1% RMSE difference) — the benefit is identifiability, not prediction.
     -   **The $\alpha$–$\gamma$ ridge is resolved,** by writing the prevalence likelihood against the GP-adjusted incidence $I$ through the detectability convolution rather than against the mechanistic prevalence $X$.
-    -   **The remaining convergence problem is isolated and diagnosed:** $\phi$, $\sigma^{2}$ and $\theta$ do not mix, and the prior predictive check shows this is a property of the simulation's lengthscale ($\phi = 3$ leaves all sites 90% correlated), not of the model. Prior and simulation default are corrected; re-running the study is outstanding.
+    -   **The remaining convergence problem is isolated and diagnosed:** $\phi$, $\sigma^{2}$ and $\theta$ do not mix. The prior predictive check showed $\phi$ is unidentifiable at $\phi = 3$; acting on that made sampling collapse, which exposed the real cause — a $\sigma^{2}$–$\theta$ variance ridge with a flat $\theta$ prior. The model is back on the working configuration and the fix is now specific.
     -   **Case study (Mozambique, not yet started):** routine DHIS2 cases from 2017, MIS 2023 prevalence, public Vector Atlas / MAP layers. The data is on the MAP Workbench and scoping is the next step.
 
 -   **Policy implications.**
@@ -861,7 +886,7 @@ For the current v1 demonstration on **Mozambique**, the two-stage approach with 
 
 -   **Limitations to keep in view.**
 
-    -   **GP hyperparameters do not mix** (median $\widehat R$ 2.1–2.4 under Model A, up to 4.1 under Model B, across all 50 replicates); diagnosed as the simulation's unidentifiable lengthscale, corrected in code, study not yet re-run.
+    -   **GP hyperparameters do not mix** (median $\widehat R$ 2.1–2.4 under Model A, up to 4.1 under Model B, across all 50 replicates); traced to a $\sigma^{2}$–$\theta$ variance ridge, not to the lengthscale. Unresolved.
     -   **Survey coverage of 30% is unrealistic** (David Duncan, Melbourne, 11 August 2026), and the identifiability result leans on the prevalence stream.
     -   **The priors imply a median prevalence of 0.97,** so the incidence scale needs tightening before real data.
     -   **The predictive gain is ≈1%, not 88%** — earlier drafts overstated this; the case rests on identifiability.
@@ -871,7 +896,7 @@ For the current v1 demonstration on **Mozambique**, the two-stage approach with 
 
 -   **Immediate next steps.**
 
-    -   **Re-run the 50-replicate study under $\phi = 0.5$** (and the corrected prior) and check whether $\phi$, $\sigma^{2}$ and $\theta$ then mix; add a penalised-complexity prior on $\phi$ if they do not.
+    -   **Reparameterise the $\sigma^{2}$–$\theta$ variance ridge** and put an informative prior on $\theta$; only then revisit the lengthscale, since making $\phi$ identifiable on its own collapsed sampling.
     -   **Re-run with realistic prevalence-survey numbers** drawn from real MIS/DHS designs, and confirm the $\alpha$-recovery result survives (David Duncan).
     -   **Tighten the $\alpha$ / $\sigma^{2}$ priors** against plausible prevalence, using the prior predictive check as the acceptance criterion.
     -   **Mozambique case study:** integrate Vector Atlas mosquito-abundance and adult-survival layers (request to Gerry Ryan, in flight); fit to DHIS2 monthly cases at district level; bring in MIS 2023 prevalence under the dual likelihood.
