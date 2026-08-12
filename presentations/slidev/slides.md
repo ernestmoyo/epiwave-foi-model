@@ -129,6 +129,10 @@ src: ./pages/11b-mcmc-diagnostics-updated.md
 ---
 
 ---
+src: ./pages/11c-prior-predictive.md
+---
+
+---
 src: ./pages/12-why-wins.md
 ---
 
