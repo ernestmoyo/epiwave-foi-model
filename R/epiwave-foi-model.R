@@ -27,32 +27,26 @@ library(ggplot2)
 # ==============================================================================
 # STAGE 1: FIXED ENTOMOLOGICAL PARAMETERS
 # ==============================================================================
+# These generators produce synthetic stand-ins for the simulation study. When
+# the Vector Atlas surfaces arrive (posterior medians of modelled abundance,
+# biting and mortality, extracted per pixel and month), they replace the
+# outputs of these functions; everything downstream consumes the same
+# [n_times x n_locations] matrix and is unchanged.
+# ==============================================================================
 
-#' Generate mosquito-to-human ratio (m) with bimodal East African seasonality.
+#' Mosquito-to-human ratio (m) with bimodal East African seasonality.
+#' Synthetic stand-in until the Vector Atlas abundance surfaces are available.
 #' @param time Numeric vector of time points (days)
 #' @param location Character vector of location IDs
-#' @param vector_atlas_data Optional data.frame (time, location, m) for empirical values
 #' @param baseline_m Baseline ratio (default 2.0)
 #' @param seasonal_amplitude Seasonal amplitude [0,1] (default 0.5)
 #' @param phase_shift Phase shift in radians (default 0)
 #' @return Matrix [n_times x n_locations]
 #' @export
-get_fixed_m <- function(time, location, vector_atlas_data = NULL,
-                        baseline_m = 2.0, seasonal_amplitude = 0.5,
-                        phase_shift = 0) {
+get_fixed_m <- function(time, location, baseline_m = 2.0,
+                        seasonal_amplitude = 0.5, phase_shift = 0) {
   n_times <- length(time)
   n_locs  <- length(location)
-
-  if (!is.null(vector_atlas_data)) {
-    m_matrix <- vector_atlas_data %>%
-      select(time, location, m) %>%
-      pivot_wider(names_from = location, values_from = m) %>%
-      select(-time) %>%
-      as.matrix()
-    if (!all(dim(m_matrix) == c(n_times, n_locs)))
-      stop("Vector Atlas data dimensions do not match time/location specifications")
-    return(m_matrix)
-  }
 
   m_matrix <- matrix(NA, nrow = n_times, ncol = n_locs)
   for (i in 1:n_locs) {
@@ -66,72 +60,29 @@ get_fixed_m <- function(time, location, vector_atlas_data = NULL,
 }
 
 
-#' Generate human biting rate (a), optionally temperature-dependent.
+#' Human biting rate (a), constant stand-in.
+#' Vector Atlas informs the product m x a but not a alone (Nick, 2026-03-30),
+#' so a takes a literature value; a temperature relationship can be added later.
 #' @param time Numeric vector of time points
 #' @param location Character vector of location IDs
-#' @param temperature_data Optional data.frame or matrix of temperatures
 #' @param baseline_a Baseline biting rate per mosquito per day (default 0.3)
 #' @return Matrix [n_times x n_locations]
 #' @export
-get_fixed_a <- function(time, location, temperature_data = NULL,
-                        baseline_a = 0.3) {
-  n_times <- length(time)
-  n_locs  <- length(location)
-
-  if (is.null(temperature_data)) {
-    return(matrix(baseline_a, nrow = n_times, ncol = n_locs))
-  }
-
-  a_matrix <- matrix(NA, nrow = n_times, ncol = n_locs)
-  if (is.data.frame(temperature_data)) {
-    for (i in 1:n_locs) {
-      loc_data <- temperature_data[temperature_data$location == location[i], ]
-      if (nrow(loc_data) > 0) {
-        temp_effect <- pmax(1 - 0.02 * (loc_data$temperature - 25)^2, 0.2)
-        a_matrix[, i] <- baseline_a * temp_effect
-      } else {
-        a_matrix[, i] <- baseline_a
-      }
-    }
-  } else {
-    a_matrix <- baseline_a * pmax(1 - 0.02 * (temperature_data - 25)^2, 0.2)
-  }
-  return(a_matrix)
+get_fixed_a <- function(time, location, baseline_a = 0.3) {
+  matrix(baseline_a, nrow = length(time), ncol = length(location))
 }
 
 
-#' Generate mosquito mortality rate (g), optionally temperature-dependent.
+#' Mosquito mortality rate (g), constant stand-in.
+#' A temperature-dependent survival relationship can be added when the
+#' covariate layers are in place.
 #' @param time Numeric vector of time points
 #' @param location Character vector of location IDs
-#' @param temperature_data Optional data.frame or matrix of temperatures
-#' @param humidity_data Optional (reserved for future use)
 #' @param baseline_g Baseline mortality rate per day (default 1/10)
 #' @return Matrix [n_times x n_locations]
 #' @export
-get_fixed_g <- function(time, location, temperature_data = NULL,
-                        humidity_data = NULL, baseline_g = 1/10) {
-  n_times <- length(time)
-  n_locs  <- length(location)
-
-  if (is.null(temperature_data)) {
-    return(matrix(baseline_g, nrow = n_times, ncol = n_locs))
-  }
-
-  g_matrix <- matrix(NA, nrow = n_times, ncol = n_locs)
-  if (is.data.frame(temperature_data)) {
-    for (i in 1:n_locs) {
-      loc_data <- temperature_data[temperature_data$location == location[i], ]
-      if (nrow(loc_data) > 0) {
-        temp_effect <- 1 + 0.01 * (loc_data$temperature - 25)^2
-        g_matrix[, i] <- baseline_g * temp_effect
-      } else {
-        g_matrix[, i] <- baseline_g
-      }
-    }
-  } else {
-    g_matrix <- baseline_g * (1 + 0.01 * (temperature_data - 25)^2)
-  }
-  return(g_matrix)
+get_fixed_g <- function(time, location, baseline_g = 1/10) {
+  matrix(baseline_g, nrow = length(time), ncol = length(location))
 }
 
 
@@ -726,329 +677,322 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48, true_params = NULL
 }
 
 
-#' Run simulation-estimation study with GP + dual likelihood.
+#' Fit one Stage 2 model and return its draws plus the fitted latent surface.
 #'
-#' Comparison: GP+offset vs GP-only (no mechanistic information).
+#' Small helper so the demo reads as a narrative: fit, sample, extract the
+#' posterior-mean latent incidence via greta::calculate on attr "I_latent".
+#' @keywords internal
+.fit_one_model <- function(data, use_mechanistic, n_samples, warmup, chains,
+                           center_alpha) {
+  label <- if (use_mechanistic) "GP + I* offset" else "I* = 0 (geostatistical)"
+  message(sprintf("\n--- Fitting: %s ---", label))
+  model <- fit_epiwave_gp(
+    observed_cases = data$observed_cases, I_star = data$I_star,
+    N_pop = data$pop_matrix, spatial_coords = data$spatial_coords_norm,
+    prev_data = data$prev_data, prev_conv_matrix = data$conv_matrix,
+    use_mechanistic = use_mechanistic, center_alpha = center_alpha)
+  t0 <- proc.time()
+  draws <- greta::mcmc(model, n_samples = n_samples, warmup = warmup,
+                       chains = chains, verbose = TRUE)
+  message(sprintf("%s: %.0fs", label, (proc.time() - t0)["elapsed"]))
+  n_sites <- ncol(data$observed_cases); n_times <- nrow(data$observed_cases)
+  I_hat <- matrix(colMeans(as.matrix(greta::calculate(
+    attr(model, "I_latent"), values = draws))), n_sites, n_times)
+  list(draws = draws, I_hat = I_hat)
+}
+
+
+#' Run the single-dataset demonstration: simulate, fit both models, score, plot.
+#'
+#' This is the walkthrough entry point. It simulates one dataset from known
+#' truth, fits the model WITH the mechanistic offset and again with I* = 0
+#' (the standard geostatistical model), scores both against the truth, and
+#' draws the diagnostic plots. The multi-replicate version of this comparison
+#' lives in R/sim_estimation_harness.R.
 #'
 #' @param n_sites Number of spatial locations (default 10)
 #' @param n_times Number of monthly time points (default 48)
 #' @param true_params List of true parameter values (NULL for defaults)
 #' @param include_interventions Simulate ITN scale-up (default TRUE)
-#' @param run_mcmc Whether to run MCMC sampling (default TRUE)
 #' @param n_samples,warmup,chains MCMC settings
-#' @param use_sparse_gp Use inducing points for sparse GP (default TRUE)
-#' @param n_inducing Number of inducing points for sparse GP (default 25)
-#' @param draws_gp_with,draws_gp_without Pre-computed draws (optional)
 #' @param seed Base seed for the simulated dataset (NULL = demo defaults)
 #' @param center_alpha Centre the GP field so alpha is the sole intercept (default FALSE)
-#' @return List of simulation results, including (when MCMC runs) posterior_summary
-#'   and comparison_metrics (WITH offset vs I*=0 latent-incidence RMSE/MAE)
+#' @param make_plots Draw the diagnostic plots (default TRUE)
+#' @return List of simulation results, including posterior_summary and
+#'   comparison_metrics (WITH offset vs I*=0 latent-incidence RMSE/MAE)
 #' @export
 simulate_and_estimate <- function(n_sites = 10, n_times = 48,
                                   true_params = NULL,
                                   include_interventions = TRUE,
-                                  run_mcmc = TRUE,
                                   n_samples = 1000, warmup = 1000, chains = 2,
-                                  use_sparse_gp = TRUE,
-                                  n_inducing = 40,
-                                  draws_gp_with = NULL,
-                                  draws_gp_without = NULL,
                                   seed = NULL,
-                                  center_alpha = FALSE) {
+                                  center_alpha = FALSE,
+                                  make_plots = TRUE) {
 
-  # ---- Steps 1-6: simulate one dataset (shared with the harness) ----
+  # Step 1: simulate one dataset from known truth (shared with the harness)
   data <- simulate_epiwave_data(n_sites = n_sites, n_times = n_times,
                                 true_params = true_params,
                                 include_interventions = include_interventions,
                                 seed = seed)
-  true_params         <- data$true_params
-  times               <- data$times
-  spatial_coords_norm <- data$spatial_coords_norm
-  conv_matrix         <- data$conv_matrix
-  I_star              <- data$I_star
-  x_star              <- data$x_star
-  pop_matrix          <- data$pop_matrix
-  epsilon_true_mat    <- data$epsilon_true_mat
-  I_true_mat          <- data$I_true_mat
-  prevalence_true_mat <- data$prevalence_true_mat
-  observed_cases      <- data$observed_cases
-  prev_data           <- data$prev_data
-
   message(sprintf("Data generated: %d sites x %d times, %d prevalence surveys",
-                  n_sites, length(times), length(prev_data$n_positive)))
+                  n_sites, length(data$times), length(data$prev_data$n_positive)))
 
-  # ---- Step 7: Spatial inducing points for sparse GP ----
-  # Inducing points only add sparsity when there are fewer of them than sites.
-  inducing <- NULL
-  if (use_sparse_gp && n_inducing < n_sites) {
-    ind_idx <- seq(1, n_sites, length.out = n_inducing)
-    inducing <- spatial_coords_norm[round(ind_idx), , drop = FALSE]
-    message(sprintf("Sparse GP: %d spatial inducing points", nrow(inducing)))
-  } else if (use_sparse_gp) {
-    message(sprintf(
-      "Full GP: n_inducing (%d) >= n_sites (%d); inducing points add no sparsity, using full GP",
-      n_inducing, n_sites))
-  }
+  # Step 2: fit the same model twice, the only difference being the offset
+  fit_with    <- .fit_one_model(data, use_mechanistic = TRUE,
+                                n_samples, warmup, chains, center_alpha)
+  fit_without <- .fit_one_model(data, use_mechanistic = FALSE,
+                                n_samples, warmup, chains, center_alpha)
 
-  # ---- Step 8: Fit GP+offset model ----
-  if (run_mcmc) {
-    message("\n--- Fitting GP + offset model ---")
-    model_gp_with <- tryCatch(
-      fit_epiwave_gp(
-        observed_cases = observed_cases, I_star = I_star,
-        N_pop = pop_matrix, spatial_coords = spatial_coords_norm,
-        prev_data = prev_data, prev_conv_matrix = conv_matrix,
-        use_mechanistic = TRUE, inducing = inducing, center_alpha = center_alpha
-      ),
-      error = function(e) { message("Model build error (GP+offset): ", e$message); NULL }
-    )
-
-    if (!is.null(model_gp_with) && is.null(draws_gp_with)) {
-      t0 <- proc.time()
-      draws_gp_with <- tryCatch(
-        greta::mcmc(model_gp_with, n_samples = n_samples,
-                    warmup = warmup, chains = chains, verbose = TRUE),
-        error = function(e) { message("MCMC error (GP+offset): ", e$message); NULL }
-      )
-      message(sprintf("GP+offset model: %.0fs", (proc.time() - t0)["elapsed"]))
-    }
-
-    # ---- Step 9: Fit GP-only model (no mechanistic offset) ----
-    message("\n--- Fitting GP-only model (no offset) ---")
-    model_gp_without <- tryCatch(
-      fit_epiwave_gp(
-        observed_cases = observed_cases, I_star = I_star,
-        N_pop = pop_matrix, spatial_coords = spatial_coords_norm,
-        prev_data = prev_data, prev_conv_matrix = conv_matrix,
-        use_mechanistic = FALSE, inducing = inducing, center_alpha = center_alpha
-      ),
-      error = function(e) { message("Model build error (GP-only): ", e$message); NULL }
-    )
-
-    if (!is.null(model_gp_without) && is.null(draws_gp_without)) {
-      t0 <- proc.time()
-      draws_gp_without <- tryCatch(
-        greta::mcmc(model_gp_without, n_samples = n_samples,
-                    warmup = warmup, chains = chains, verbose = TRUE),
-        error = function(e) { message("MCMC error (GP-only): ", e$message); NULL }
-      )
-      message(sprintf("GP-only model: %.0fs", (proc.time() - t0)["elapsed"]))
-    }
-
-  }
-
-  # ---- Collect results ----
-  # Transpose back to [n_times x n_sites] for storage/plotting
-  I_true_matrix <- t(I_true_mat)
+  # Step 3: collect everything the scoring and plots need in one results object
   results <- list(
-    true_incidence         = I_true_matrix,
-    observed_cases         = observed_cases,
-    mechanistic_prediction = I_star,
-    x_star                 = x_star,
-    prevalence_true        = t(prevalence_true_mat),
-    conv_matrix            = conv_matrix,
-    epsilon_true_mat       = epsilon_true_mat,
-    spatial_coords         = spatial_coords_norm,
-    prev_data              = prev_data,
-    draws_gp_with          = draws_gp_with,
-    draws_gp_without       = draws_gp_without,
-    times                  = times,
-    true_params            = true_params
+    true_incidence         = t(data$I_true_mat),      # [n_times x n_sites]
+    observed_cases         = data$observed_cases,
+    mechanistic_prediction = data$I_star,
+    x_star                 = data$x_star,
+    prevalence_true        = t(data$prevalence_true_mat),
+    conv_matrix            = data$conv_matrix,
+    epsilon_true_mat       = data$epsilon_true_mat,
+    spatial_coords         = data$spatial_coords_norm,
+    pop_matrix             = data$pop_matrix,
+    prev_data              = data$prev_data,
+    times                  = data$times,
+    true_params            = data$true_params,
+    draws_gp_with          = fit_with$draws,
+    draws_gp_without       = fit_without$draws,
+    I_hat_with             = fit_with$I_hat,          # [n_sites x n_times]
+    I_hat_without          = fit_without$I_hat
   )
 
-  # ---- Diagnostic Plots ----
+  # Step 4: score both fits against the truth
+  results$posterior_summary <- extract_posterior_summary(fit_with$draws)
+  message("\nGP + offset posterior summary:")
+  print(results$posterior_summary, row.names = FALSE)
+
+  m_with    <- compute_performance_metrics(t(fit_with$I_hat),    results$true_incidence)
+  m_without <- compute_performance_metrics(t(fit_without$I_hat), results$true_incidence)
+  results$comparison_metrics <- data.frame(
+    model          = c("GP + I* offset", "I* = 0 (geostatistical)"),
+    rmse           = c(m_with$rmse, m_without$rmse),
+    mae            = c(m_with$mae, m_without$mae),
+    relative_error = c(m_with$relative_error, m_without$relative_error))
+  message("\nLatent incidence recovery vs truth (lower RMSE = better):")
+  print(results$comparison_metrics, row.names = FALSE)
+
+  # Step 5: diagnostic plots, in the order a reader would want them
+  if (make_plots) {
+    plot_simulated_truth(results)      # what the data-generating truth looks like
+    plot_posterior_checks(results)     # did the fit recover the parameters?
+    plot_mcmc_traces(results$draws_gp_with)  # did the chains actually mix?
+    plot_model_comparison(results)     # WITH offset vs I* = 0
+  }
+
+  results
+}
+
+
+# ==============================================================================
+# DIAGNOSTIC PLOTS
+# ==============================================================================
+# Each function takes the results list from simulate_and_estimate() and draws
+# one group of plots: first the simulated truth, then the posterior checks,
+# then the chain diagnostics, then the WITH-offset vs I*=0 comparison.
+# ==============================================================================
+
+#' Plot the simulated truth: I* vs true incidence, cases, and the GP residuals.
+#' @param results List returned by simulate_and_estimate()
+#' @param site_idx Site shown in the time-series panels (default 1)
+#' @export
+plot_simulated_truth <- function(results, site_idx = 1) {
   if (!requireNamespace("gridExtra", quietly = TRUE))
-    stop("Package 'gridExtra' required for the demo plots. Install with install.packages('gridExtra')")
-  site_idx <- 1
+    stop("Package 'gridExtra' required for the demo plots.")
+  times <- results$times
+  n_sites <- ncol(results$observed_cases)
 
-  # Plot 1: Two-panel — rate space (I* vs I_true) and count space (expected vs observed)
   df_rate <- data.frame(
-    month = seq_along(times),
-    mechanistic_istar = I_star[, site_idx],
-    true_incidence    = I_true_matrix[, site_idx]
-  )
-  df_count <- data.frame(
-    month          = seq_along(times),
-    expected_cases = true_params$reporting_rate * I_true_matrix[, site_idx] * pop_matrix[, site_idx],
-    observed_cases = observed_cases[, site_idx]
-  )
+    month             = seq_along(times),
+    mechanistic_istar = results$mechanistic_prediction[, site_idx],
+    true_incidence    = results$true_incidence[, site_idx])
   p1a <- ggplot(df_rate, aes(x = month)) +
     geom_line(aes(y = mechanistic_istar, colour = "I* (mechanistic rate)"),
               linetype = "dashed", linewidth = 1) +
     geom_line(aes(y = true_incidence, colour = "I_true (with GP residuals)"), linewidth = 1) +
     scale_colour_manual(values = c("I* (mechanistic rate)" = "#C00000",
                                    "I_true (with GP residuals)" = "#2E75B6")) +
-    labs(title = sprintf("Site %d — Rate Space", site_idx),
-         subtitle = "Gap between lines = exp(epsilon) from spatial GP + AR(1)",
+    labs(title = sprintf("Site %d: rate space", site_idx),
+         subtitle = "The gap between the lines is exp(epsilon), the GP residual",
          x = NULL, y = "Infection incidence rate", colour = "") +
     theme_minimal(base_size = 12) +
     theme(legend.position = "bottom", panel.grid.minor = element_blank(),
           plot.title = element_text(face = "bold"), axis.text.x = element_blank())
+
+  df_count <- data.frame(
+    month          = seq_along(times),
+    expected_cases = results$true_params$reporting_rate *
+      results$true_incidence[, site_idx] * results$pop_matrix[, site_idx],
+    observed_cases = results$observed_cases[, site_idx])
   p1b <- ggplot(df_count, aes(x = month)) +
-    geom_line(aes(y = expected_cases, colour = "Expected (gamma * I_true * N)"), linewidth = 1) +
+    geom_line(aes(y = expected_cases, colour = "Expected (gamma * I_true * N_pop)"), linewidth = 1) +
     geom_point(aes(y = observed_cases, colour = "Observed (Poisson draws)"),
                alpha = 0.6, size = 2) +
-    scale_colour_manual(values = c("Expected (gamma * I_true * N)" = "#2E75B6",
+    scale_colour_manual(values = c("Expected (gamma * I_true * N_pop)" = "#2E75B6",
                                    "Observed (Poisson draws)" = "black")) +
-    labs(title = "Count Space",
-         subtitle = "What Stage 2 actually fits to (Poisson likelihood)",
+    labs(title = "Count space",
+         subtitle = "What the Poisson likelihood actually fits to",
          x = "Month", y = "Case counts", colour = "") +
     theme_minimal(base_size = 12) +
     theme(legend.position = "bottom", panel.grid.minor = element_blank(),
           plot.title = element_text(face = "bold"))
   gridExtra::grid.arrange(p1a, p1b, ncol = 1)
 
-  # Plot 2: True GP residual surface
-  # epsilon_true_mat is [n_sites x n_times], transpose for plotting
   eps_df <- expand.grid(month = seq_along(times), site = seq_len(n_sites))
-  eps_df$epsilon <- as.vector(t(epsilon_true_mat))
+  eps_df$epsilon <- as.vector(t(results$epsilon_true_mat))
   p2 <- ggplot(eps_df, aes(x = month, y = factor(site), fill = epsilon)) +
     geom_tile() +
     scale_fill_gradient2(low = "#C00000", mid = "white", high = "#2E75B6", midpoint = 0) +
-    labs(title = "True GP Residuals (epsilon)", x = "Month", y = "Site", fill = "epsilon") +
+    labs(title = "True GP residual surface (epsilon)",
+         x = "Month", y = "Site", fill = "epsilon") +
     theme_minimal(base_size = 12) +
     theme(plot.title = element_text(face = "bold"))
   print(p2)
+  invisible(NULL)
+}
 
-  # Plot 3: Alpha-gamma joint posterior (if GP draws available)
-  if (!is.null(draws_gp_with)) {
-    gp_df <- as.data.frame(as.matrix(draws_gp_with))
-    p3 <- ggplot(gp_df, aes(x = alpha, y = gamma_rr)) +
-      geom_point(alpha = 0.15, size = 0.8, colour = "#2E75B6") +
-      geom_vline(xintercept = true_params$alpha, linetype = "dashed", colour = "grey30") +
-      geom_hline(yintercept = true_params$reporting_rate, linetype = "dashed", colour = "grey30") +
-      labs(title = "Alpha-Gamma Joint Posterior (GP+offset)",
-           subtitle = "Cluster = identifiable; ridge = non-identifiable",
-           x = "alpha (intercept)", y = "gamma (reporting rate)") +
-      theme_minimal(base_size = 12) +
-      theme(plot.title = element_text(face = "bold"))
-    print(p3)
 
-    # Plot 4: GP hyperparameter posteriors
-    gp_hyper_df <- data.frame(
-      sigma2 = gp_df$sigma2,
-      phi    = gp_df$phi,
-      theta_rho = gp_df$theta
-    )
-    true_vals <- data.frame(
-      param = c("sigma2", "phi", "theta_rho"),
-      value = c(true_params$gp_sigma^2, true_params$gp_phi, true_params$gp_rho)
-    )
+#' Plot the posterior checks: alpha-gamma joint, hyperparameter marginals,
+#' posterior predictive cases, and the prevalence surveys.
+#' @param results List returned by simulate_and_estimate()
+#' @param site_idx Site shown in the predictive panel (default 1)
+#' @export
+plot_posterior_checks <- function(results, site_idx = 1) {
+  gp_df <- as.data.frame(as.matrix(results$draws_gp_with))
+  tp <- results$true_params
 
-    gp_long <- tidyr::pivot_longer(gp_hyper_df, everything(), names_to = "param", values_to = "value")
-    p4 <- ggplot(gp_long, aes(x = value)) +
-      geom_density(fill = "#2E75B6", alpha = 0.4) +
-      geom_vline(data = true_vals, aes(xintercept = value),
-                 linetype = "dashed", colour = "#C00000") +
-      facet_wrap(~ param, scales = "free") +
-      labs(title = "GP Hyperparameter Posteriors", x = "Value", y = "Density") +
-      theme_minimal(base_size = 12) +
-      theme(plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
-    print(p4)
+  p3 <- ggplot(gp_df, aes(x = alpha, y = gamma_rr)) +
+    geom_point(alpha = 0.15, size = 0.8, colour = "#2E75B6") +
+    geom_vline(xintercept = tp$alpha, linetype = "dashed", colour = "grey30") +
+    geom_hline(yintercept = tp$reporting_rate, linetype = "dashed", colour = "grey30") +
+    labs(title = "Alpha-gamma joint posterior (GP + offset)",
+         subtitle = "A cluster means identifiable; a ridge means not",
+         x = "alpha (intercept)", y = "gamma (reporting rate)") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(face = "bold"))
+  print(p3)
 
-    # Plot 5: Posterior predictive check — predicted cases from the FITTED latent
-    # incidence I (alpha + log(I*) + epsilon), via greta::calculate on attr
-    # "I_latent", not just the mechanistic mean. Falls back to the mechanistic
-    # mean only if the live model object is unavailable (e.g. draws passed in).
-    gamma_est <- median(gp_df$gamma_rr)
-    have_model_with <- exists("model_gp_with", inherits = FALSE) && !is.null(model_gp_with)
-    if (have_model_with) {
-      I_with_mat <- matrix(colMeans(as.matrix(greta::calculate(
-        attr(model_gp_with, "I_latent"), values = draws_gp_with))),
-        nrow = n_sites, ncol = length(times))            # [n_sites x n_times]
-      pred_gp_with <- gamma_est * I_with_mat[site_idx, ] * pop_matrix[, site_idx]
-    } else {
-      alpha_est    <- median(gp_df$alpha)
-      pred_gp_with <- gamma_est * exp(alpha_est) * I_star[, site_idx] * pop_matrix[, site_idx]
-    }
+  gp_long <- tidyr::pivot_longer(
+    data.frame(sigma2 = gp_df$sigma2, phi = gp_df$phi, theta = gp_df$theta),
+    dplyr::everything(), names_to = "param", values_to = "value")
+  true_vals <- data.frame(param = c("sigma2", "phi", "theta"),
+                          value = c(tp$gp_sigma^2, tp$gp_phi, tp$gp_rho))
+  p4 <- ggplot(gp_long, aes(x = value)) +
+    geom_density(fill = "#2E75B6", alpha = 0.4) +
+    geom_vline(data = true_vals, aes(xintercept = value),
+               linetype = "dashed", colour = "#C00000") +
+    facet_wrap(~ param, scales = "free") +
+    labs(title = "GP hyperparameter posteriors",
+         subtitle = "Multimodal or shapeless marginals indicate a parameter the model cannot identify",
+         x = "Value", y = "Density") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
+  print(p4)
 
-    pp_df <- data.frame(
-      month    = seq_along(times),
-      observed = observed_cases[, site_idx],
-      gp_with  = pred_gp_with
-    )
+  pp_df <- data.frame(
+    month    = seq_along(results$times),
+    observed = results$observed_cases[, site_idx],
+    fitted   = median(gp_df$gamma_rr) * results$I_hat_with[site_idx, ] *
+      results$pop_matrix[, site_idx])
+  p5 <- ggplot(pp_df, aes(x = month)) +
+    geom_point(aes(y = observed, colour = "Observed"), size = 2, alpha = 0.7) +
+    geom_line(aes(y = fitted, colour = "Fitted (gamma * I_hat * N_pop)"), linewidth = 1) +
+    scale_colour_manual(values = c("Observed" = "black",
+                                   "Fitted (gamma * I_hat * N_pop)" = "#2E75B6")) +
+    labs(title = sprintf("Posterior predictive check (site %d)", site_idx),
+         subtitle = "Fitted cases use the full latent incidence, including the GP residual",
+         x = "Month", y = "Cases", colour = "") +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
+  print(p5)
 
-    p5 <- ggplot(pp_df, aes(x = month)) +
-      geom_point(aes(y = observed, colour = "Observed"), size = 2, alpha = 0.7) +
-      geom_line(aes(y = gp_with, colour = "GP+offset"), linewidth = 1) +
-      scale_colour_manual(values = c("Observed" = "black", "GP+offset" = "#2E75B6")) +
-      labs(title = sprintf("Posterior Predictive Check (Site %d)", site_idx),
-           x = "Month", y = "Predicted Cases", colour = "") +
-      theme_minimal(base_size = 12) +
-      theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
-    print(p5)
+  prev_df <- data.frame(
+    true_prevalence     = results$prev_data$true_prevalence,
+    observed_prevalence = results$prev_data$n_positive / results$prev_data$n_tested)
+  p6 <- ggplot(prev_df, aes(x = true_prevalence, y = observed_prevalence)) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+    geom_point(alpha = 0.6, size = 2, colour = "#2E7D32") +
+    labs(title = "Prevalence surveys: observed vs true",
+         subtitle = "Prevalence is derived from I via the detectability convolution",
+         x = "True prevalence", y = "Observed (n_positive / n_tested)") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(face = "bold"))
+  print(p6)
+  invisible(NULL)
+}
 
-    # Plot 6: Prevalence surveys — observed vs true at survey cells
-    # Confirms the prevalence likelihood data is now derived from I (via the
-    # detectability convolution), not from mechanistic X.
-    prev_ppc_df <- data.frame(
-      true_prevalence     = prev_data$true_prevalence,
-      observed_prevalence = prev_data$n_positive / prev_data$n_tested
-    )
-    p6 <- ggplot(prev_ppc_df, aes(x = true_prevalence, y = observed_prevalence)) +
-      geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
-      geom_point(alpha = 0.6, size = 2, colour = "#2E7D32") +
-      labs(title = "Prevalence Surveys: Observed vs True",
-           subtitle = "Prevalence derived from I via detectability convolution (1 - exp(-conv))",
-           x = "True prevalence", y = "Observed (n_positive / n_tested)") +
-      theme_minimal(base_size = 12) +
-      theme(plot.title = element_text(face = "bold"))
-    print(p6)
 
-    # ---- Parameter recovery + WITH vs I*=0 comparison (Nick's headline test) ----
-    param_summary <- extract_posterior_summary(draws_gp_with)
-    message("\nGP + offset posterior summary:")
-    print(param_summary, row.names = FALSE)
-    results$posterior_summary <- param_summary
+#' Plot the visual convergence checks: per-chain traces and marginal densities.
+#'
+#' R-hat is a single number; these plots show what the chains actually did.
+#' Healthy chains overlap and wander freely. Chains at different levels, or
+#' multimodal marginals, mean the parameter is not yet trustworthy.
+#' @param draws greta_mcmc_list from greta::mcmc()
+#' @param params Parameters to show (default all five)
+#' @export
+plot_mcmc_traces <- function(draws,
+                             params = c("alpha", "gamma_rr", "sigma2", "phi", "theta")) {
+  chains <- lapply(seq_along(draws), function(k) {
+    d <- as.data.frame(as.matrix(draws[[k]]))[, params, drop = FALSE]
+    d$iteration <- seq_len(nrow(d)); d$chain <- factor(k); d
+  })
+  trace_df <- tidyr::pivot_longer(do.call(rbind, chains),
+                                  dplyr::all_of(params),
+                                  names_to = "param", values_to = "value")
 
-    if (have_model_with) {
-      metrics_with <- compute_performance_metrics(t(I_with_mat), I_true_matrix)
-      cmp <- data.frame(model = "GP + I* offset", rmse = metrics_with$rmse,
-                        mae = metrics_with$mae, relative_error = metrics_with$relative_error)
+  p_trace <- ggplot(trace_df, aes(x = iteration, y = value, colour = chain)) +
+    geom_line(alpha = 0.7, linewidth = 0.3) +
+    facet_wrap(~ param, scales = "free_y", ncol = 1) +
+    labs(title = "Trace plots by chain",
+         subtitle = "Healthy chains overlap; chains at different levels have not converged",
+         x = "Iteration (post warmup)", y = NULL, colour = "Chain") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
+  print(p_trace)
 
-      have_model_without <- exists("model_gp_without", inherits = FALSE) &&
-        !is.null(model_gp_without) && !is.null(draws_gp_without)
-      I_without_mat <- NULL
-      if (have_model_without) {
-        I_without_mat <- matrix(colMeans(as.matrix(greta::calculate(
-          attr(model_gp_without, "I_latent"), values = draws_gp_without))),
-          nrow = n_sites, ncol = length(times))
-        metrics_without <- compute_performance_metrics(t(I_without_mat), I_true_matrix)
-        cmp <- rbind(cmp, data.frame(model = "I* = 0 (geostatistical)",
-                                     rmse = metrics_without$rmse, mae = metrics_without$mae,
-                                     relative_error = metrics_without$relative_error))
-      }
-      message("\nLatent incidence recovery vs truth (lower RMSE = better):")
-      print(cmp, row.names = FALSE)
-      results$comparison_metrics <- cmp
+  p_dens <- ggplot(trace_df, aes(x = value, fill = chain, colour = chain)) +
+    geom_density(alpha = 0.25) +
+    facet_wrap(~ param, scales = "free", ncol = 2) +
+    labs(title = "Marginal densities by chain",
+         subtitle = "Chains disagreeing on the shape indicate the same non-convergence",
+         x = "Value", y = "Density") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
+  print(p_dens)
+  invisible(NULL)
+}
 
-      # Plot 7: predicted incidence at the example site — truth vs both models
-      cmp_df <- data.frame(month = seq_along(times),
-                           truth = I_true_matrix[, site_idx],
-                           with_offset = I_with_mat[site_idx, ])
-      cols <- c("Truth" = "black", "GP + I* offset" = "#2E75B6")
-      p7 <- ggplot(cmp_df, aes(x = month)) +
-        geom_line(aes(y = truth, colour = "Truth"), linewidth = 1) +
-        geom_line(aes(y = with_offset, colour = "GP + I* offset"), linewidth = 1)
-      if (have_model_without) {
-        cmp_df$without_offset <- I_without_mat[site_idx, ]
-        p7 <- p7 + geom_line(data = cmp_df,
-                             aes(y = without_offset, colour = "I* = 0 (geostatistical)"),
-                             linewidth = 1, linetype = "dashed")
-        cols <- c(cols, "I* = 0 (geostatistical)" = "#C00000")
-      }
-      p7 <- p7 +
-        scale_colour_manual(values = cols) +
-        labs(title = sprintf("Latent Incidence Recovery (Site %d)", site_idx),
-             subtitle = "WITH mechanistic offset vs I* = 0 (standard geostatistical)",
-             x = "Month", y = "Infection incidence rate", colour = "") +
-        theme_minimal(base_size = 12) +
-        theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
-      print(p7)
-    }
-  }
 
-  return(results)
+#' Plot the headline comparison: truth vs both fitted models at one site.
+#' @param results List returned by simulate_and_estimate()
+#' @param site_idx Site to show (default 1)
+#' @export
+plot_model_comparison <- function(results, site_idx = 1) {
+  cmp_df <- data.frame(month          = seq_along(results$times),
+                       truth          = results$true_incidence[, site_idx],
+                       with_offset    = results$I_hat_with[site_idx, ],
+                       without_offset = results$I_hat_without[site_idx, ])
+  cols <- c("Truth" = "black", "GP + I* offset" = "#2E75B6",
+            "I* = 0 (geostatistical)" = "#C00000")
+  p7 <- ggplot(cmp_df, aes(x = month)) +
+    geom_line(aes(y = truth, colour = "Truth"), linewidth = 1) +
+    geom_line(aes(y = with_offset, colour = "GP + I* offset"), linewidth = 1) +
+    geom_line(aes(y = without_offset, colour = "I* = 0 (geostatistical)"),
+              linewidth = 1, linetype = "dashed") +
+    scale_colour_manual(values = cols) +
+    labs(title = sprintf("Latent incidence recovery (site %d)", site_idx),
+         subtitle = "WITH mechanistic offset vs I* = 0 (standard geostatistical)",
+         x = "Month", y = "Infection incidence rate", colour = "") +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
+  print(p7)
+  invisible(NULL)
 }
 
 
@@ -1123,12 +1067,9 @@ main_example <- function(n_sites = 10, n_times = 48,
     n_sites               = n_sites,
     n_times               = n_times,
     include_interventions = TRUE,
-    run_mcmc              = TRUE,
     n_samples             = n_samples,
     warmup                = warmup,
-    chains                = chains,
-    use_sparse_gp         = TRUE,
-    n_inducing            = 25
+    chains                = chains
   )
 
   return(invisible(results))
