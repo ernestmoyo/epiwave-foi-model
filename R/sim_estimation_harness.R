@@ -42,15 +42,13 @@ PARAMS <- c("alpha", "gamma_rr", "sigma2", "phi", "theta")
 #' @keywords internal
 .score_prediction <- function(model, draws, I_true_mat) {
   I_node <- attr(model, "I_latent")
-  if (is.null(I_node)) return(list(rmse = NA, mae = NA, field_coverage = NA, pred_mean = NULL))
   ns <- nrow(I_true_mat); nt <- ncol(I_true_mat)
   cc <- as.matrix(greta::calculate(I_node, values = draws))   # [n_draws x (ns*nt)], column-major
   pred_mean <- matrix(colMeans(cc), ns, nt)
   pred_lwr  <- matrix(apply(cc, 2, quantile, 0.025), ns, nt)
   pred_upr  <- matrix(apply(cc, 2, quantile, 0.975), ns, nt)
-  list(rmse = sqrt(mean((pred_mean - I_true_mat)^2)),
-       mae  = mean(abs(pred_mean - I_true_mat)),
-       field_coverage = mean(I_true_mat >= pred_lwr & I_true_mat <= pred_upr),
+  score <- compute_performance_metrics(pred_mean, I_true_mat, pred_lwr, pred_upr)
+  list(rmse = score$rmse, mae = score$mae, field_coverage = score$coverage,
        pred_mean = pred_mean)
 }
 
@@ -71,7 +69,7 @@ run_sim_estimation_study <- function(n_reps = 50,
                                      n_samples = 2000, warmup = 2000, chains = 4,
                                      center_alpha = TRUE,
                                      use_sparse_gp = FALSE, n_inducing = 40,
-                                     true_params = NULL,
+                                     true_params = TRUE_PARAMS,
                                      base_seed = 1000,
                                      out_path = "outputs/sim_estimation_results.RData") {
 
@@ -148,7 +146,10 @@ run_sim_estimation_study <- function(n_reps = 50,
     meta = list(n_reps = n_reps, n_sites = n_sites, n_times = n_times,
                 n_samples = n_samples, warmup = warmup, chains = chains,
                 center_alpha = center_alpha, use_sparse_gp = use_sparse_gp,
-                true_params = if (is.null(true_params)) "defaults" else true_params,
+                true_params = true_params,
+                priors = PRIORS,
+                git_sha = tryCatch(system("git describe --always --dirty", intern = TRUE),
+                                   error = function(e) NA_character_),
                 date = as.character(Sys.Date())),
     per_rep = per_rep, predictive = predictive,
     recovery_summary = recovery_summary, predictive_summary = predictive_summary,

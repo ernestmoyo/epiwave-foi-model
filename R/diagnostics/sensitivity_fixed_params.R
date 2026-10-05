@@ -1,8 +1,7 @@
 # ==============================================================================
 # Sensitivity of I* to the fixed entomological parameters
 # ==============================================================================
-# David's suggestion (Melbourne, 12 Aug 2026): the entomological inputs m, a, g
-# are treated as fixed, but they are posterior summaries from the Vector Atlas
+# The entomological inputs m, a, g are treated as fixed, but they are posterior summaries from the Vector Atlas
 # models, not known constants. Rather than propagating full uncertainty (which
 # would reintroduce the computational cost the two-stage design avoids), run a
 # cheap sensitivity: solve Stage 1 with a lower and an upper value in place of
@@ -26,15 +25,15 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr); library(tidyr
 #' @keywords internal
 .solve_istar <- function(scale_m = 1, scale_a = 1, scale_g = 1,
                          n_sites = 10, n_times = 48, seed = 123) {
-  times     <- seq(0, n_times * 30, by = 30)
+  times     <- seq(0, n_times * DAYS_PER_STEP, by = DAYS_PER_STEP)
   locations <- paste0("Site_", sprintf("%02d", 1:n_sites))
-  m <- get_fixed_m(times, locations, baseline_m = 2.0 * scale_m,
+  m <- get_fixed_m(times, locations, baseline_m = TRUE_PARAMS$baseline_m * scale_m,
                    seasonal_amplitude = 0.6)
-  a <- get_fixed_a(times, locations, baseline_a = 0.3 * scale_a)
-  g <- get_fixed_g(times, locations, baseline_g = (1/10) * scale_g)
+  a <- get_fixed_a(times, locations, baseline_a = TRUE_PARAMS$baseline_a * scale_a)
+  g <- get_fixed_g(times, locations, baseline_g = TRUE_PARAMS$baseline_g * scale_g)
   ode <- solve_ross_macdonald_multi_site(m, a, g, times = times,
-                                         b = 0.8, c = 0.8, r = 1/7)
-  compute_mechanistic_prediction(m, a, 0.8, ode$z)
+                                         b = TRUE_PARAMS$b, c = TRUE_PARAMS$c, r = TRUE_PARAMS$r)
+  compute_mechanistic_prediction(m, a, TRUE_PARAMS$b, ode$z)
 }
 
 #' Run the one-at-a-time sensitivity of I* to m, a and g.
@@ -76,10 +75,10 @@ run_fixed_param_sensitivity <- function(spread = 0.20,
   # Time-series plot at one site: central line with low/high band per parameter
   mk_df <- function(par) {
     data.frame(
-      month   = seq_len(nrow(istars$central)),
-      central = istars$central[, site_idx],
-      low     = istars[[paste0(par, "_low")]][, site_idx],
-      high    = istars[[paste0(par, "_high")]][, site_idx],
+      month   = seq_len(ncol(istars$central)),
+      central = istars$central[site_idx, ],
+      low     = istars[[paste0(par, "_low")]][site_idx, ],
+      high    = istars[[paste0(par, "_high")]][site_idx, ],
       param   = par)
   }
   band_df <- do.call(rbind, lapply(c("m", "a", "g"), mk_df))

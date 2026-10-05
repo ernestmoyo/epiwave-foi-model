@@ -1,10 +1,9 @@
 # ==============================================================================
 # Prior predictive checks for the Stage 2 GP model
 # ==============================================================================
-# Punam's suggestion (2026-03-30 meeting): before fitting, draw the parameters
-# from their priors, push them through the model, and check that the priors imply
-# plausible data — and, critically, whether the spatial lengthscale prior lives in
-# a region the data can actually identify.
+# Before fitting, draw the parameters from their priors, push them through the
+# model, and check that the priors imply plausible data, and whether the
+# spatial lengthscale prior lives in a region the data can actually identify.
 #
 # This is pure forward simulation from the priors. No greta / no MCMC.
 #
@@ -18,22 +17,21 @@ suppressPackageStartupMessages({
   library(ggplot2); library(dplyr); library(tidyr)
 })
 
-# --- Priors, exactly as declared in fit_epiwave_gp() ---------------------------
-# alpha  ~ normal(0, 1)
-# gamma  ~ normal(0.1, 0.05) truncated to (0.001, Inf)
-# tau2   ~ lognormal(-0.5, 0.5)   (marginal variance of the field)
-# theta  ~ beta(2, 2)             (AR(1) correlation)
-# sigma2 = tau2 * (1 - theta^2)   (innovation variance, derived)
-# phi    ~ lognormal(0.5, 0.5)    (working config; median ~1.65)
+# --- Draws from PRIORS, the same list fit_epiwave_gp() uses ---------------------
 draw_priors <- function(n) {
-  rtnorm <- function(n, m, s, lo) { x <- rnorm(n, m, s); x[x < lo] <- lo; x }
-  tau2  <- rlnorm(n, -0.5, 0.5)
-  theta <- rbeta(n, 2, 2)
+  # Truncated normal by inverse CDF: maps standard-normal draws onto the region
+  # above `lower`, using the same number of random draws as rnorm().
+  rtnorm <- function(n, mean, sd, lower) {
+    p_lower <- pnorm((lower - mean) / sd)
+    mean + sd * qnorm(p_lower + (1 - p_lower) * pnorm(rnorm(n)))
+  }
+  tau2  <- rlnorm(n, PRIORS$tau2$meanlog, PRIORS$tau2$sdlog)
+  theta <- rbeta(n, PRIORS$theta$shape1, PRIORS$theta$shape2)
   data.frame(
-    alpha  = rnorm(n, 0, 1),
-    gamma  = rtnorm(n, 0.1, 0.05, 0.001),
+    alpha  = rnorm(n, PRIORS$alpha$mean, PRIORS$alpha$sd),
+    gamma  = rtnorm(n, PRIORS$gamma_rr$mean, PRIORS$gamma_rr$sd, PRIORS$gamma_rr$lower),
     sigma2 = tau2 * (1 - theta ^ 2),   # derived innovation variance
-    phi    = rlnorm(n, 0.5, 0.5),
+    phi    = rlnorm(n, PRIORS$phi$meanlog, PRIORS$phi$sdlog),
     theta  = theta
   )
 }
@@ -62,11 +60,11 @@ run_prior_predictive <- function(n_draws = 500, n_sites = 10, n_times = 48,
   # to the data generator. We only reuse its deterministic pieces; the GP field is
   # drawn fresh from the priors below.
   d <- simulate_epiwave_data(n_sites = n_sites, n_times = n_times, seed = 1)
-  I_star_t   <- t(pmax(d$I_star, 1e-6))      # [n_sites x n_times]
-  N_t        <- t(d$pop_matrix)              # [n_sites x n_times]
+  I_star     <- pmax(d$I_star, I_STAR_FLOOR) # [n_sites x n_times]
+  N          <- d$pop_matrix                 # [n_sites x n_times]
   coords     <- d$spatial_coords_norm        # [n_sites x 2], on [0,1]
   conv       <- d$conv_matrix                # [n_times x n_times]
-  nt         <- ncol(I_star_t)
+  nt         <- ncol(I_star)
   max_dist   <- max(dist(coords))            # largest inter-site distance on [0,1]
   true_phi   <- d$true_params$gp_phi         # the lengthscale the study tries to recover
 
@@ -82,9 +80,9 @@ run_prior_predictive <- function(n_draws = 500, n_sites = 10, n_times = 48,
     p <- pri[i, ]
     eps <- simulate_gp_residuals(coords, nt, sigma = sqrt(p$sigma2),
                                  phi = p$phi, rho = p$theta)      # [n_sites x n_times]
-    I   <- exp(p$alpha + log(I_star_t) + eps)                    # latent incidence
+    I   <- exp(p$alpha + log(I_star) + eps)                    # latent incidence
     prev <- 1 - exp(-(I %*% conv))                               # observed-scale prevalence
-    exp_cases <- p$gamma * I * N_t                               # expected case counts
+    exp_cases <- p$gamma * I * N                                 # expected case counts
     data.frame(
       draw = i, phi = p$phi, sigma2 = p$sigma2, min_corr = p$min_corr,
       prev_median = median(prev), prev_max = max(prev),
