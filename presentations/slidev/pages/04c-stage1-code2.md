@@ -14,28 +14,22 @@ compute_mechanistic_prediction <- function(
 }
 
 # ITN/IRS effects on entomological params
+# resistance lowers effective ITN coverage
+# (Symons et al., as in the VA IR cube)
 apply_interventions <- function(
     m, a, g,
-    itn_coverage = NULL,
-    irs_coverage = NULL,
-    resistance_index = 0) {
-  u <- 1 - resistance_index
-  m_adj <- m; a_adj <- a; g_adj <- g
-
+    itn_coverage = NULL, irs_coverage = NULL,
+    itn_susceptibility = 1,
+    irs_susceptibility = 1) {
   if (!is.null(itn_coverage)) {
-    # Reduce mosquito abundance
-    m_adj <- m_adj * ((1 - itn_coverage)
-      + itn_coverage*(1 - u*kill_rate))
-    # Reduce biting rate
-    a_adj <- a_adj *
-      (1 - itn_coverage*u*feeding_inhibit)
-    # Increase mortality
-    g_adj <- g_adj *
-      (1 + itn_coverage*u*mortality_boost)
+    n <- itn_coverage *
+      (1 - 0.46 * (1 - itn_susceptibility))
+    m <- m * (1 - n * kill_rate)        # fewer mosquitoes
+    a <- a * (1 - n * feeding_inhibit)  # less biting
+    g <- g * (1 + n * mortality_boost)  # more deaths
   }
-  # IRS similarly adjusts g and a
-
-  list(m = m_adj, a = a_adj, g = g_adj)
+  # IRS: own susceptibility (not pyrethroids)
+  list(m = m, a = a, g = g)
 }
 ```
 
@@ -74,5 +68,5 @@ This means intervention counterfactuals only require re-running Stage 1 — Stag
 <!--
 The mechanistic prediction is a single line — m times a times b times z. I-star is a rate — population enters the Poisson likelihood in Stage 2.
 
-The apply_interventions function is important for the operational value of the framework. It adjusts entomological parameters upstream of the ODE based on ITN and IRS coverage. This means if you want to model a counterfactual — what happens if ITN coverage increases from 30% to 70% — you just re-run Stage 1 with new coverage values. Stage 2 stays the same. The resistance index allows modelling the impact of insecticide resistance on intervention effectiveness.
+The apply_interventions function is important for the operational value of the framework. It adjusts entomological parameters upstream of the ODE based on ITN and IRS coverage. This means if you want to model a counterfactual — what happens if ITN coverage increases from 30% to 70% — you just re-run Stage 1 with new coverage values. Stage 2 stays the same. Insecticide resistance enters as the bioassay susceptibility from the Vector Atlas resistance cube: it lowers the effective net coverage, but even fully resistant mosquitoes leave nets with 54% of their effect, because nets still block bites.
 -->

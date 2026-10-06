@@ -46,6 +46,16 @@ library(tidyr)
 # sigma2 = tau2 * (1 - theta^2). The data only see the marginal variance, so
 # sampling sigma2 and theta directly gave a ridge the chains could not cross.
 # See docs/2026-10-05_code_simplification/prior_notes.md.
+#
+# What each prior implies (95% prior range, on a scale that can be checked):
+#   alpha     incidence is 0.14 to 7.1 times I* before residuals. On real data,
+#             where I* from these toy inputs is far too high, this needs revisiting.
+#   gamma_rr  a reporting rate of 0.017 to 0.20.
+#   tau2      0.23 to 1.62, so a site one sd above the mechanism has 1.6 to 3.6
+#             times I*.
+#   theta     0.09 to 0.91: from little to strong month-to-month persistence.
+#   phi       0.62 to 4.39 on the unit square: correlation between sites one unit
+#             apart of 0.24 to 0.96.
 PRIORS <- list(
   alpha    = list(mean = 0, sd = 1),                     # intercept
   gamma_rr = list(mean = 0.1, sd = 0.05, lower = 0.001), # reporting rate
@@ -84,34 +94,71 @@ get_fixed_a <- function(time, location, baseline_a = 0.3) {
   matrix(baseline_a, nrow = length(location), ncol = length(time))
 }
 
+# m from the interim Vector Atlas abundance maps. Those maps are calibrated
+# against human biting data, so they give m * a (bites per person per day);
+# dividing by a mapped biting rate a gives m. The maps are observed under the
+# nets already in use: applying ITN effects to this m again counts them twice.
+m_from_biting_rate <- function(biting_rate, a) {
+  stopifnot(all(a > 0))
+  biting_rate / a
+}
+
 # Mosquito death rate g (per day), i.e. a 10-day mean lifespan.
 get_fixed_g <- function(time, location, baseline_g = 1/10) {
   matrix(baseline_g, nrow = length(location), ncol = length(time))
 }
 
+# Share of the ITN effect kept when vectors are resistant, given the fraction
+# susceptible in bioassays (the Vector Atlas IR-cube quantity). Posterior mean of
+# the Symons et al. relationship, as used in goldingn/ir_cube
+# (R/fig_ento_epi_impact.R): 100% coverage with a fully resistant population
+# works like 54% coverage with a susceptible one, because nets still block bites.
+# It was estimated on the prevalence scale, so applying it to coverage is an
+# interim step until a hut-trial mapping (bioassay -> killing, deterrence) is used.
+itn_effect_retained <- function(susceptibility) {
+  1 - 0.46 * (1 - susceptibility)
+}
+
 # ITN and IRS act on m, a and g before the ODE, so interventions enter
 # through the entomology rather than the statistical model. Each effect is a
-# multiplier that equals 1 at zero coverage; resistance scales the effect down.
-# Effect sizes follow Griffin et al. (2010) and Bhatt et al. (2015).
-apply_interventions <- function(m, a, g, itn_coverage = NULL, irs_coverage = NULL,
-                                resistance_index = 0,
+# multiplier that equals 1 at zero coverage. Effect sizes follow Griffin et al.
+# (2010) and Bhatt et al. (2015). Resistance lowers the effective coverage.
+# IRS has its own susceptibility, because IRS insecticides are mostly not the
+# pyrethroids used on nets; it scales the IRS effect linearly.
+apply_interventions <- function(m, a, g,
+                                itn_coverage = NULL, irs_coverage = NULL,
+                                itn_susceptibility = 1, irs_susceptibility = 1,
                                 itn_kill_rate = 0.5, itn_feeding_inhibit = 0.3,
                                 itn_mortality_boost = 0.3,
                                 irs_efficacy = 0.5, irs_feeding_inhibit = 0.1) {
-  u <- 1 - resistance_index   # share of the effect that survives resistance
-
   if (!is.null(itn_coverage)) {
     stopifnot(all(itn_coverage >= 0 & itn_coverage <= 1))
-    m <- m * ((1 - itn_coverage) + itn_coverage * (1 - u * itn_kill_rate))
-    a <- a * (1 - itn_coverage * u * itn_feeding_inhibit)
-    g <- g * (1 + itn_coverage * u * itn_mortality_boost)
+    n <- itn_coverage * itn_effect_retained(itn_susceptibility)
+    m <- m * (1 - n * itn_kill_rate)
+    a <- a * (1 - n * itn_feeding_inhibit)
+    g <- g * (1 + n * itn_mortality_boost)
   }
   if (!is.null(irs_coverage)) {
     stopifnot(all(irs_coverage >= 0 & irs_coverage <= 1))
-    g <- g * (1 + irs_coverage * u * irs_efficacy)
-    a <- a * (1 - irs_coverage * u * irs_feeding_inhibit)
+    s <- irs_coverage * irs_susceptibility
+    g <- g * (1 + s * irs_efficacy)
+    a <- a * (1 - s * irs_feeding_inhibit)
   }
   list(m = m, a = a, g = g)
+}
+
+# Extrinsic incubation period (days) from temperature: the degree-day form of
+# Gething et al. (2011), as in modd-africa/hackthon2026 (EIP.R). Below 16 C the
+# parasite cannot complete sporogony.
+eip_gething <- function(temperature) {
+  ifelse(temperature <= 16, Inf, 111 / (temperature - 16))
+}
+
+# Fraction of infected mosquitoes that survive the EIP when it is split into
+# `stages` exposed stages: (1 + g n / stages)^-stages, which tends to exp(-g n).
+# One stage gives 0.50 at g n = 1 against the exact 0.37; four stages give 0.41.
+eip_survival <- function(g, eip_days, stages = 4) {
+  (1 + g * eip_days / stages)^(-stages)
 }
 
 # Ross-Macdonald: x = human prevalence, z = mosquito infection prevalence.
@@ -126,23 +173,58 @@ ross_macdonald_ode <- function(t, state, parms) {
   list(c(dx_dt, dz_dt))
 }
 
+# The same model with an extrinsic incubation period: newly infected mosquitoes
+# pass through `stages` exposed classes y (each left at rate stages / n) before
+# becoming infectious. Only (1 + g n / stages)^-stages of them live that long.
+ross_macdonald_eip_ode <- function(t, state, parms) {
+  k <- parms$stages
+  x <- state[1]
+  y <- state[1 + seq_len(k)]
+  z <- state[k + 2]
+  m <- parms$m(t); a <- parms$a(t); g <- parms$g(t)
+  leave <- k * parms$inv_eip(t)   # 1 / EIP is 0 when it is too cold for sporogony
+
+  dx_dt <- m * a * parms$b * z * (1 - x) - parms$r * x
+  dy_dt <- c(a * parms$c * x * (1 - sum(y) - z), leave * y[-k]) - (g + leave) * y
+  dz_dt <- leave * y[k] - g * z
+  list(c(dx_dt, dy_dt, dz_dt))
+}
+
 # Solve the ODE once per site (no inference here: this is the point of the
 # two-stage design). Returns x and z as [n_sites x n_times].
+#   eip_days = NULL    no incubation period (the 2-state model above)
+#   eip_days = number or [n_sites x n_times] matrix, e.g. eip_gething(temperature)
 solve_ross_macdonald_multi_site <- function(m_matrix, a_matrix, g_matrix, times,
                                             b = 0.8, c = 0.8, r = 1/7,
-                                            x0 = 0.01, z0 = 0.001) {
+                                            x0 = 0.01, z0 = 0.001,
+                                            eip_days = NULL, eip_stages = 4) {
   stopifnot(identical(dim(m_matrix), dim(a_matrix)),
             identical(dim(m_matrix), dim(g_matrix)),
             ncol(m_matrix) == length(times))
   x <- z <- matrix(NA_real_, nrow = nrow(m_matrix), ncol = length(times))
+  if (!is.null(eip_days)) {
+    stopifnot(length(eip_days) %in% c(1, length(m_matrix)))
+    eip_days <- matrix(eip_days, nrow = nrow(m_matrix), ncol = length(times))
+  }
 
   for (site in seq_len(nrow(m_matrix))) {
     parms <- list(m = approxfun(times, m_matrix[site, ], rule = 2),
                   a = approxfun(times, a_matrix[site, ], rule = 2),
                   g = approxfun(times, g_matrix[site, ], rule = 2),
                   b = b, c = c, r = r)
-    solution <- ode(y = c(x = x0, z = z0), times = times,
-                    func = ross_macdonald_ode, parms = parms, method = "lsoda")
+    if (is.null(eip_days)) {
+      solution <- ode(y = c(x = x0, z = z0), times = times,
+                      func = ross_macdonald_ode, parms = parms, method = "lsoda")
+    } else {
+      eip <- eip_days[site, ]
+      parms$inv_eip <- approxfun(times, 1 / eip, rule = 2)
+      parms$stages <- eip_stages
+      # start the exposed classes near balance with z0: about g n z0 in total
+      y0 <- if (is.finite(eip[1])) g_matrix[site, 1] * eip[1] * z0 / eip_stages else 0
+      state0 <- c(x = x0, setNames(rep(y0, eip_stages), paste0("y", seq_len(eip_stages))), z = z0)
+      solution <- ode(y = state0, times = times,
+                      func = ross_macdonald_eip_ode, parms = parms, method = "lsoda")
+    }
     x[site, ] <- solution[, "x"]
     z[site, ] <- solution[, "z"]
   }
@@ -242,6 +324,9 @@ build_detectability_matrix <- function(n_times) {
 #                            the only intercept. This changes what alpha means:
 #                            it then estimates alpha + mean(epsilon).
 #   inducing                 optional [m x 2] inducing points for a sparse GP.
+#   observed_sites           rows whose data enter the likelihood (NULL = all).
+#                            The GP still covers every site, so the fit predicts
+#                            the others: this is how held-out validation works.
 #
 # Prevalence data are required. Without them alpha and gamma are not
 # separately identifiable, so there is deliberately no case-only path.
@@ -251,7 +336,8 @@ build_detectability_matrix <- function(n_times) {
 fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
                            prev_data, prev_conv_matrix,
                            use_mechanistic = TRUE, center_alpha = FALSE,
-                           inducing = NULL, gp_tol = 1e-3) {
+                           inducing = NULL, gp_tol = 1e-3,
+                           observed_sites = NULL) {
   if (!"package:greta.gp" %in% search())
     stop("greta is not loaded. Run source('R/greta_setup.R') first.")
   stopifnot(identical(dim(observed_cases), dim(I_star)),
@@ -282,8 +368,14 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
   I_latent <- exp(log_I)
 
   # Cases: population enters here, not in I*
-  cases <- as_data(observed_cases)
-  distribution(cases) <- poisson(gamma_rr * I_latent * N_pop)
+  expected_cases <- gamma_rr * I_latent * N_pop
+  if (is.null(observed_sites)) {
+    cases <- as_data(observed_cases)
+    distribution(cases) <- poisson(expected_cases)
+  } else {
+    cases <- as_data(observed_cases[observed_sites, , drop = FALSE])
+    distribution(cases) <- poisson(expected_cases[observed_sites, ])
+  }
 
   # Prevalence depends on I, not on the ODE's x, so the GP residuals and alpha
   # inform both likelihoods. Recent infections are summed through the
@@ -291,10 +383,13 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
   # here p = 1 - exp(-sum(I * q)), the chance of at least one detectable
   # infection. The two agree when the sum is small, and this form cannot
   # exceed 1.
+  survey_used <- if (is.null(observed_sites)) seq_along(prev_data$survey_indices) else
+    which(((prev_data$survey_indices - 1) %% nrow(observed_cases) + 1) %in% observed_sites)
+  stopifnot(length(survey_used) > 0)   # the surveys identify alpha and gamma
   detectable <- I_latent %*% as_data(prev_conv_matrix)
-  p_positive <- 1 - exp(-detectable[prev_data$survey_indices])
-  positives  <- as_data(prev_data$n_positive)
-  distribution(positives) <- binomial(prev_data$n_tested, p_positive)
+  p_positive <- 1 - exp(-detectable[prev_data$survey_indices[survey_used]])
+  positives  <- as_data(prev_data$n_positive[survey_used])
+  distribution(positives) <- binomial(prev_data$n_tested[survey_used], p_positive)
 
   greta_model <- model(alpha, gamma_rr, sigma2, phi, theta)
   attr(greta_model, "I_latent") <- I_latent
@@ -313,6 +408,8 @@ TRUE_PARAMS <- list(
   baseline_m = 2.0, baseline_a = 0.3, baseline_g = 1/10,
   b = 0.8, c = 0.8, r = 1/7,
   population = 10000, reporting_rate = 0.1,
+  itn_max = 0.7,              # ITN coverage reached by the final month
+  itn_susceptibility = 0.8,   # fraction susceptible in bioassays (IR-cube scale)
   alpha = 0, gp_sigma = 0.6, gp_phi = 3.0, gp_rho = 0.75
 )
 
@@ -358,9 +455,13 @@ simulate_prevalence_surveys <- function(prevalence, survey_fraction = 0.3,
 # seed = NULL reproduces the demo; the harness passes one seed per replicate.
 # n_times is the number of monthly steps; the matrices have n_times + 1
 # columns because month 0 is included.
+# site_variation = TRUE gives each site its own ITN coverage (east-west) and
+# susceptibility (south-north), so I* varies in space as it will with real
+# intervention and IR-cube maps. FALSE gives every site the same entomology.
 simulate_epiwave_data <- function(n_sites = 10, n_times = 48,
                                   true_params = TRUE_PARAMS,
-                                  include_interventions = TRUE, seed = NULL) {
+                                  include_interventions = TRUE, seed = NULL,
+                                  site_variation = FALSE) {
   tp <- true_params
   seeds <- if (is.null(seed)) c(coords = 123, eps = 321, cases = 456, surveys = 789)
            else seed + c(coords = 0L, eps = 1L, cases = 2L, surveys = 3L)
@@ -378,10 +479,14 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48,
   a <- get_fixed_a(times, locations, baseline_a = tp$baseline_a)
   g <- get_fixed_g(times, locations, baseline_g = tp$baseline_g)
   if (include_interventions) {
-    itn_coverage <- matrix(seq(0, 0.7, length.out = length(times)),
-                           nrow = n_sites, ncol = length(times), byrow = TRUE)
-    adjusted <- apply_interventions(m, a, g, itn_coverage = itn_coverage,
-                                    resistance_index = 0.2)
+    itn_max <- if (site_variation) 0.2 + 0.7 * coords_01[, "lon"] else rep(tp$itn_max, n_sites)
+    susceptibility <- if (site_variation) 0.4 + 0.6 * coords_01[, "lat"] else tp$itn_susceptibility
+    itn_coverage <- outer(itn_max, seq(0, 1, length.out = length(times)))
+    adjusted <- apply_interventions(
+      m, a, g,
+      itn_coverage = itn_coverage,
+      itn_susceptibility = matrix(susceptibility, nrow = n_sites, ncol = length(times))
+    )
     m <- adjusted$m; a <- adjusted$a; g <- adjusted$g
   }
   ode <- solve_ross_macdonald_multi_site(m, a, g, times = times,

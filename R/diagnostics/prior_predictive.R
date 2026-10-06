@@ -54,12 +54,12 @@ run_prior_predictive <- function(n_draws = 500, n_sites = 10, n_times = 48,
                                  seed = 2026,
                                  outdir = "outputs/prior_predictive") {
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
-  set.seed(seed)
 
   # Fixed mechanistic scaffold (I*, coords, convolution, population) from one call
   # to the data generator. We only reuse its deterministic pieces; the GP field is
   # drawn fresh from the priors below.
   d <- simulate_epiwave_data(n_sites = n_sites, n_times = n_times, seed = 1)
+  set.seed(seed)   # after the simulator, so prior draws do not depend on its data
   I_star     <- pmax(d$I_star, I_STAR_FLOOR) # [n_sites x n_times]
   N          <- d$pop_matrix                 # [n_sites x n_times]
   coords     <- d$spatial_coords_norm        # [n_sites x 2], on [0,1]

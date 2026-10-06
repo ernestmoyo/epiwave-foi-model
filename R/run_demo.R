@@ -6,6 +6,11 @@
 # fits against the truth. This is one replicate of the simulation study; the
 # 50-replicate version is R/sim_estimation_harness.R.
 #
+# 1. Simulate data from known truth
+# 2. Fit the same model twice; only the offset differs
+# 3. Score both maps against the truth
+# 4. Plot
+#
 # Run it line by line in RStudio from the project root, or with
 # source("R/run_demo.R", echo = TRUE) so the plots print. The two fits take
 # about 10-20 minutes on a laptop.
@@ -53,7 +58,7 @@ print(scores[, c("rmse", "mae", "relative_error")])   # lower is better
 
 
 # ==============================================================================
-# Plots
+# 4. Plots
 # ==============================================================================
 
 theme_epiwave <- theme_minimal(base_size = 12) +
