@@ -8,6 +8,7 @@ const page = src("shell.html")
   .replace("/*STYLE*/", () => src("style.css"))
   .replace("/*DATA*/", () => src("data.js"))
   .replace("/*CONTENT*/", () => src("content.js"))
+  .replace("/*WALK*/", () => src("walkthrough.js"))
   .replace("/*MODEL*/", () => src("model.js"))
   .replace("/*APP*/", () => src("app.js"));
 

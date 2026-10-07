@@ -73,7 +73,7 @@ for (eip in list(NULL, 10)) {
                        eip_days = eip, stages = 4)
   run <- solve_ross_macdonald_multi_site(const(0.3), const(0.3), const(0.1), yr,
                                          b = 0.5, c = 0.5, r = 1/180,
-                                         eip_days = eip, start = eq)
+                                         eip_days = eip, start = "equilibrium")
   check(sprintf("rm_equilibrium is a fixed point (EIP %s)", if (is.null(eip)) "off" else eip),
         max(abs(run$x / eq$x - 1), abs(run$z / eq$z - 1)) < 1e-6)
 }

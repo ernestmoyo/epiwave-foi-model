@@ -5,14 +5,14 @@
 #
 # The model has two stages:
 #
-#   Stage 1 (fixed, solved once per site)
-#     m, a, g (with ITN/IRS effects) -> Ross-Macdonald ODE -> z
-#     I* = m * a * b * z                          mechanistic incidence RATE
+#   Stage 1 (fixed inputs, solved once per site)
+#     m, a, g (with ITN/IRS effects) -> Ross-Macdonald ODE (with EIP) -> z
+#     I* = m * a * b * z                          mechanistic incidence RATE (per day)
 #
 #   Stage 2 (Bayesian, greta)
 #     log I = alpha + log I* + epsilon            I* = 0 drops the offset
 #     epsilon_t = theta * epsilon_{t-1} + f_t,    f_t ~ GP(0, sigma2 * Matern52(phi))
-#     cases      ~ Poisson(gamma * I * N)          N = population
+#     cases      ~ Poisson(gamma * I * N * 30)     N = population, 30 days a month
 #     positives  ~ Binomial(T, p),  p = 1 - exp(-(I convolved with q))
 #                                                  T = number tested
 #
@@ -48,8 +48,8 @@ library(tidyr)
 # See docs/2026-10-05_code_simplification/prior_notes.md.
 #
 # What each prior implies (95% prior range, on a scale that can be checked):
-#   alpha     incidence is 0.14 to 7.1 times I* before residuals. On real data,
-#             where I* from these toy inputs is far too high, this needs revisiting.
+#   alpha     incidence is 0.14 to 7.1 times I* before residuals. With the
+#             literature parameters I* is a realistic rate, so alpha near 0 fits.
 #   gamma_rr  a reporting rate of 0.017 to 0.20.
 #   tau2      0.23 to 1.62, so a site one sd above the mechanism has 1.6 to 3.6
 #             times I*.
@@ -177,7 +177,9 @@ eip_survival <- function(g, eip_days, stages = 4) {
 ross_macdonald_ode <- function(t, state, parms) {
   x <- state[1]
   z <- state[2]
-  m <- parms$m(t); a <- parms$a(t); g <- parms$g(t)
+  m <- parms$m(t)
+  a <- parms$a(t)
+  g <- parms$g(t)
 
   dx_dt <- m * a * parms$b * z * (1 - x) - parms$r * x
   dz_dt <- a * parms$c * x * (1 - z) - g * z
@@ -192,11 +194,20 @@ ross_macdonald_eip_ode <- function(t, state, parms) {
   x <- state[1]
   y <- state[1 + seq_len(k)]
   z <- state[k + 2]
-  m <- parms$m(t); a <- parms$a(t); g <- parms$g(t)
-  leave <- k * parms$inv_eip(t)   # 1 / EIP is 0 when it is too cold for sporogony
+  m <- parms$m(t)
+  a <- parms$a(t)
+  g <- parms$g(t)
+  leave <- k * parms$inv_eip(t)   # rate of moving on a stage; 0 when too cold
 
   dx_dt <- m * a * parms$b * z * (1 - x) - parms$r * x
-  dy_dt <- c(a * parms$c * x * (1 - sum(y) - z), leave * y[-k]) - (g + leave) * y
+
+  # mosquitoes newly infected, then passed stage to stage until infectious
+  new_infected <- a * parms$c * x * (1 - sum(y) - z)
+  dy_dt <- numeric(k)
+  for (i in seq_len(k)) {
+    arriving <- if (i == 1) new_infected else leave * y[i - 1]
+    dy_dt[i] <- arriving - (g + leave) * y[i]
+  }
   dz_dt <- leave * y[k] - g * z
   list(c(dx_dt, dy_dt, dz_dt))
 }
@@ -207,10 +218,16 @@ ross_macdonald_eip_ode <- function(t, state, parms) {
 # Returns x, z and the exposed classes y (NULL without an EIP); all zero when
 # R0 <= 1.
 rm_equilibrium <- function(m, a, g, b, c, r, eip_days = NULL, stages = 4) {
-  S <- if (is.null(eip_days)) 1 else eip_survival(g, eip_days, stages)
+  if (is.null(eip_days)) {
+    S <- 1
+    y_none <- NULL
+  } else {
+    S <- eip_survival(g, eip_days, stages)
+    y_none <- rep(0, stages)
+  }
   z_of <- function(x) S * a * c * x / (a * c * x + g)
   if (m * a^2 * b * c * S / (g * r) <= 1) {
-    return(list(x = 0, z = 0, y = if (is.null(eip_days)) NULL else rep(0, stages)))
+    return(list(x = 0, z = 0, y = y_none))
   }
   x <- uniroot(function(x) m * a * b * z_of(x) * (1 - x) - r * x,
                c(1e-12, 1 - 1e-12), tol = 1e-14)$root
@@ -218,9 +235,11 @@ rm_equilibrium <- function(m, a, g, b, c, r, eip_days = NULL, stages = 4) {
   if (!is.null(eip_days)) {
     inflow <- a * c * x * g / (g + a * c * x)
     leave <- stages / eip_days
-    y <- inflow * (leave / (leave + g))^(seq_len(stages) - 1) / (leave + g)
+    # geometric series: each stage keeps a share `stay` of the one before
+    stay <- leave / (leave + g)
+    y <- inflow * stay^(seq_len(stages) - 1) / (leave + g)
   }
-  list(x = x, z = z_of(x), y = y)
+  list(x = unname(x), z = unname(z_of(x)), y = unname(y))
 }
 
 # Solve the ODE once per site (no inference here: this is the point of the
@@ -250,23 +269,32 @@ solve_ross_macdonald_multi_site <- function(m_matrix, a_matrix, g_matrix, times,
                   a = approxfun(times, a_matrix[site, ], rule = 2),
                   g = approxfun(times, g_matrix[site, ], rule = 2),
                   b = b, c = c, r = r)
-    st <- if (is.null(start)) list(x = x0, z = z0, y = NULL) else if (identical(start, "equilibrium"))
-      rm_equilibrium(m_matrix[site, 1], a_matrix[site, 1], g_matrix[site, 1], b, c, r,
-                     eip_days = if (is.null(eip_days)) NULL else eip_days[site, 1], stages = eip_stages)
-      else start
-    st[] <- lapply(st, function(v) if (is.null(v)) NULL else unname(v))
+    # starting state
+    eip_start <- NULL
+    if (!is.null(eip_days)) eip_start <- eip_days[site, 1]
+    if (identical(start, "equilibrium")) {
+      start_state <- rm_equilibrium(m_matrix[site, 1], a_matrix[site, 1], g_matrix[site, 1],
+                                    b, c, r, eip_days = eip_start, stages = eip_stages)
+    } else {
+      start_state <- list(x = x0, z = z0, y = NULL)
+    }
+
     if (is.null(eip_days)) {
-      solution <- ode(y = c(x = st$x, z = st$z), times = times,
+      solution <- ode(y = c(x = start_state$x, z = start_state$z), times = times,
                       func = ross_macdonald_ode, parms = parms, method = "lsoda")
     } else {
       eip <- eip_days[site, ]
       parms$inv_eip <- approxfun(times, 1 / eip, rule = 2)
       parms$stages <- eip_stages
-      # without a given start, put about g n z in the exposed classes
-      y0 <- if (!is.null(st$y)) st$y else if (is.finite(eip[1])) rep(g_matrix[site, 1] * eip[1] * st$z / eip_stages, eip_stages) else rep(0, eip_stages)
-      state0 <- c(x = st$x, setNames(y0, paste0("y", seq_len(eip_stages))), z = st$z)
-      solution <- ode(y = state0, times = times,
-                      func = ross_macdonald_eip_ode, parms = parms, method = "lsoda")
+      if (is.null(start_state$y)) {
+        # no equilibrium start: put about g n z in the exposed stages
+        n_start <- 0
+        if (is.finite(eip[1])) n_start <- eip[1]
+        start_state$y <- rep(g_matrix[site, 1] * n_start * start_state$z / eip_stages, eip_stages)
+      }
+      solution <- ode(y = c(x = start_state$x, y = start_state$y, z = start_state$z),
+                      times = times, func = ross_macdonald_eip_ode, parms = parms,
+                      method = "lsoda")
     }
     x[site, ] <- solution[, "x"]
     z[site, ] <- solution[, "z"]
@@ -274,8 +302,8 @@ solve_ross_macdonald_multi_site <- function(m_matrix, a_matrix, g_matrix, times,
   list(x = x, z = z)
 }
 
-# I* = m * a * b * z, new human infections per person per day. It is a rate:
-# population enters later, in the case likelihood.
+# I* = m * a * b * z: the force of infection, new infections per susceptible
+# person per day. It is a rate: population enters later, in the case likelihood.
 compute_mechanistic_prediction <- function(m_matrix, a_matrix, b, z_matrix) {
   m_matrix * a_matrix * b * z_matrix
 }
@@ -343,10 +371,13 @@ transform_convolution_kernel <- function(kernel_daily, max_diff_days, timeperiod
 # The convolution as a fixed matrix C, so greta computes it as one multiply:
 # (I %*% C)[, t] = sum_k I[, t - k] * weights[k + 1].
 build_convolution_matrix <- function(n_times, weights) {
-  lag <- outer(seq_len(n_times), seq_len(n_times), function(i, j) j - i)
   C <- matrix(0, nrow = n_times, ncol = n_times)
-  in_kernel <- lag >= 0 & lag < length(weights)
-  C[in_kernel] <- weights[lag[in_kernel] + 1]
+  for (lag in seq_along(weights) - 1) {
+    for (j in seq_len(n_times)) {
+      i <- j - lag
+      if (i >= 1) C[i, j] <- weights[lag + 1]
+    }
+  }
   C
 }
 
@@ -381,8 +412,9 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
                            use_mechanistic = TRUE, center_alpha = FALSE,
                            inducing = NULL, gp_tol = 1e-3,
                            observed_sites = NULL) {
-  if (!"package:greta.gp" %in% search())
+  if (!"package:greta.gp" %in% search()) {
     stop("greta is not loaded. Run source('R/greta_setup.R') first.")
+  }
   stopifnot(identical(dim(observed_cases), dim(I_star)),
             identical(dim(observed_cases), dim(N_pop)))
   n_times <- ncol(observed_cases)
@@ -403,10 +435,10 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
   if (center_alpha) epsilon <- epsilon - mean(epsilon)
 
   # Latent infection incidence (per person per day)
-  log_I <- if (use_mechanistic) {
-    alpha + log(pmax(I_star, I_STAR_FLOOR)) + epsilon
+  if (use_mechanistic) {
+    log_I <- alpha + log(pmax(I_star, I_STAR_FLOOR)) + epsilon
   } else {
-    alpha + epsilon
+    log_I <- alpha + epsilon   # I* = 0: the standard geostatistical model
   }
   I_latent <- exp(log_I)
 
@@ -428,11 +460,18 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
   # here p = 1 - exp(-sum(I * q)), the chance of at least one detectable
   # infection. The two agree when the sum is small, and this form cannot
   # exceed 1.
-  survey_used <- if (is.null(observed_sites)) seq_along(prev_data$survey_indices) else
-    which(((prev_data$survey_indices - 1) %% nrow(observed_cases) + 1) %in% observed_sites)
+  # survey_indices count down the columns of the [sites x months] matrix, so
+  # the remainder after dividing by the number of sites gives each survey's site
+  survey_site <- (prev_data$survey_indices - 1) %% nrow(observed_cases) + 1
+  if (is.null(observed_sites)) {
+    survey_used <- seq_along(survey_site)
+  } else {
+    survey_used <- which(survey_site %in% observed_sites)
+  }
   stopifnot(length(survey_used) > 0)   # the surveys identify alpha and gamma
+  survey_cells <- prev_data$survey_indices[survey_used]
   detectable <- I_latent %*% as_data(prev_conv_matrix)
-  p_positive <- 1 - exp(-detectable[prev_data$survey_indices[survey_used]])
+  p_positive <- 1 - exp(-detectable[survey_cells])
   positives  <- as_data(prev_data$n_positive[survey_used])
   distribution(positives) <- binomial(prev_data$n_tested[survey_used], p_positive)
 
@@ -515,8 +554,12 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48,
                                   include_interventions = TRUE, seed = NULL,
                                   site_variation = FALSE) {
   tp <- true_params
-  seeds <- if (is.null(seed)) c(coords = 123, eps = 321, cases = 456, surveys = 789)
-           else seed + c(coords = 0L, eps = 1L, cases = 2L, surveys = 3L)
+  # one seed per random step, so each step can be reproduced on its own
+  if (is.null(seed)) {
+    seeds <- c(coords = 123, eps = 321, cases = 456, surveys = 789)
+  } else {
+    seeds <- c(coords = seed, eps = seed + 1L, cases = seed + 2L, surveys = seed + 3L)
+  }
 
   times     <- seq(0, n_times * DAYS_PER_STEP, by = DAYS_PER_STEP)
   locations <- sprintf("Site_%02d", seq_len(n_sites))
@@ -524,22 +567,35 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48,
   set.seed(seeds[["coords"]])
   coords <- matrix(runif(n_sites * 2, min = -5, max = 5), ncol = 2,
                    dimnames = list(locations, c("lon", "lat")))
-  coords_01 <- apply(coords, 2, function(v) (v - min(v)) / (diff(range(v)) + 1e-10))
+  # rescale longitude and latitude to the unit square
+  coords_01 <- coords
+  for (j in 1:2) {
+    v <- coords[, j]
+    coords_01[, j] <- (v - min(v)) / (diff(range(v)) + 1e-10)
+  }
 
   # Stage 1
   m <- get_fixed_m(times, locations, baseline_m = tp$baseline_m, seasonal_amplitude = 0.6)
   a <- get_fixed_a(times, locations, baseline_a = tp$baseline_a)
   g <- get_fixed_g(times, locations, baseline_g = tp$baseline_g)
   if (include_interventions) {
-    itn_max <- if (site_variation) 0.2 + 0.7 * coords_01[, "lon"] else rep(tp$itn_max, n_sites)
-    susceptibility <- if (site_variation) 0.4 + 0.6 * coords_01[, "lat"] else tp$itn_susceptibility
+    if (site_variation) {
+      itn_max <- 0.2 + 0.7 * coords_01[, "lon"]           # more nets further east
+      susceptibility <- 0.4 + 0.6 * coords_01[, "lat"]    # more resistance further south
+    } else {
+      itn_max <- rep(tp$itn_max, n_sites)
+      susceptibility <- tp$itn_susceptibility
+    }
+    # coverage rises in a straight line from 0 to itn_max over the months
     itn_coverage <- outer(itn_max, seq(0, 1, length.out = length(times)))
     adjusted <- apply_interventions(
       m, a, g,
       itn_coverage = itn_coverage,
       itn_susceptibility = matrix(susceptibility, nrow = n_sites, ncol = length(times))
     )
-    m <- adjusted$m; a <- adjusted$a; g <- adjusted$g
+    m <- adjusted$m
+    a <- adjusted$a
+    g <- adjusted$g
   }
   # start each site at the steady state of its month-0 conditions: infections
   # last months, so starting near zero would add years of artificial build-up

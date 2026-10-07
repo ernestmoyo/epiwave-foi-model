@@ -464,6 +464,7 @@
         <div class="tile"><span class="v">${LABS.length}</span><span class="l">Labs that run in the browser</span></div>
       </section>
       <section class="section"><h2>Chapters</h2><div class="cards">${C.chapters.map((c, i) => `<a class="card" href="#ch-${c.id}"><span class="meta">${i + 1} · ${c.minutes} min · ${c.derivations.length} derivations</span><h3>${c.title}</h3><p>${c.lede}</p></a>`).join("")}</div></section>
+      <section class="section"><h2>The code, line by line</h2><p class="lede">Every modelling line of the R code beside its maths and a plain explanation. <a href="#code">Open the walkthrough</a>.</p></section>
       <section class="section"><h2>Labs</h2><div class="cards">${LABS.map(l => `<a class="card" href="#lab-${l.id}"><h3>${l.title}</h3><p>${l.blurb}</p></a>`).join("")}</div></section>
       <section class="section"><h2>Before the next check-in</h2><p class="lede">${C.ask.length - doneAsk().size} open questions to raise. <a href="#ask">Open the tracker</a>.</p></section>
       ${footer}`;
@@ -517,6 +518,21 @@
     render();
   }
 
+  function viewCode(main) {
+    const W = window.EPIWAVE_WALKTHROUGH;
+    const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    main.innerHTML = `<section class="hero"><p class="eyebrow">Code walkthrough</p><h1>The model code, line by line</h1>
+        <p class="lede">Each line of R/epiwave-foi-model.R that does the modelling, beside the maths it computes and what it does in words. A test checks every line on this page against the real code, so the page cannot drift from it.</p></section>
+      <nav class="filters" aria-label="Sections">${W.map(s => `<a class="btn" href="#code-${s.id}">${s.title}</a>`).join("")}</nav>
+      ${W.map(s => `<section class="section walk-section" id="code-${s.id}">
+        <div><h2>${s.title}</h2><p class="note mono">${s.file}</p></div>
+        <p class="reading">${s.intro}</p>
+        <div class="walk" role="table" aria-label="${s.title}">
+          <div class="walk-row walk-head" role="row"><span role="columnheader">Code</span><span role="columnheader">Maths</span><span role="columnheader">What it does</span></div>
+          ${s.rows.map(r => `<div class="walk-row" role="row"><pre class="walk-code" role="cell">${esc(r.c)}</pre><div class="walk-math" role="cell">${r.m || "—"}</div><div class="walk-note" role="cell">${r.n}</div></div>`).join("")}
+        </div></section>`).join("")}${footer}`;
+  }
+
   function viewFormulas(main) {
     main.innerHTML = `<section class="hero"><p class="eyebrow">Formula sheet</p><h1>Every equation, and where it lives in the code</h1></section>
       ${C.formulas.map(g => `<section class="formula-group"><h2>${g.group}</h2>${g.items.map(([name, f, fn]) => `<div class="formula-row"><span>${name}</span><span class="f">${f}</span><span class="fn">${fn || ""}</span></div>`).join("")}</section>`).join("")}${footer}`;
@@ -546,6 +562,7 @@
     nav.innerHTML = `<a class="brand" href="#home">EpiWave-FOI study</a>
       <div class="group"><span class="eyebrow">Chapters</span>${C.chapters.map((c, i) => `<a class="item" href="#ch-${c.id}"><span>${i + 1}. ${c.short}</span><span class="k">${c.minutes}m</span></a>`).join("")}</div>
       <div class="group"><span class="eyebrow">Labs</span>${LABS.map(l => `<a class="item" href="#lab-${l.id}"><span>${l.title}</span></a>`).join("")}</div>
+      <div class="group"><span class="eyebrow">Code</span><a class="item" href="#code"><span>Code walkthrough</span></a></div>
       <div class="group"><span class="eyebrow">Practice</span><a class="item" href="#ask"><span>Question tracker</span></a><a class="item" href="#formulas"><span>Formula sheet</span></a><a class="item" href="#drill"><span>Drill</span></a></div>
       <button class="theme-toggle" id="theme-btn" type="button"></button>`;
     const btn = $("#theme-btn");
@@ -561,13 +578,17 @@
     else if (h.startsWith("lab-")) viewLab(main, h.slice(4));
     else if (h === "ask") viewAsk(main);
     else if (h === "formulas") viewFormulas(main);
+    else if (h === "code" || h.startsWith("code-")) viewCode(main);
     else if (h === "drill") viewDrill(main);
     else viewHome(main);
     document.querySelectorAll("nav.side a.item").forEach(a => {
       if (a.getAttribute("href") === "#" + h) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
-    window.scrollTo(0, 0);
+    // a link to one walkthrough section scrolls to it; everything else starts at the top
+    const target = h.startsWith("code-") ? document.getElementById(h) : null;
+    if (target) target.scrollIntoView();
+    else window.scrollTo(0, 0);
   }
 
   buildNav();
