@@ -59,8 +59,25 @@
   // Ross-Macdonald solved with RK4 on a quarter-day step; output at `times`.
   // eipDays = null: the 2-state model. Otherwise newly infected mosquitoes pass
   // through `stages` exposed classes before becoming infectious.
-  M.solveRM = function ({ times, m, a, g, b = 0.8, c = 0.8, r = 1 / 7, x0 = 0.01, z0 = 0.001, h = 0.25,
-                          eipDays = null, stages = 4 }) {
+  // Literature constants, as TRANSMISSION in R/epiwave-foi-model.R
+  M.TRANSMISSION = { b: 0.5, c: 0.5, r: 1 / 180, eipDays: 10 };
+
+  // Steady state with parameters held constant (rm_equilibrium() in R)
+  M.rmEquilibrium = function (m, a, g, b, c, r, eipDays = null, stages = 4) {
+    const S = eipDays === null ? 1 : M.eipSurvival(g, eipDays, stages);
+    const zOf = x => S * a * c * x / (a * c * x + g);
+    const k = eipDays === null ? 0 : stages;
+    if (m * a * a * b * c * S / (g * r) <= 1) return { x: 0, z: 0, y: new Array(k).fill(0) };
+    let lo = 1e-12, hi = 1 - 1e-12;
+    const f = x => m * a * b * zOf(x) * (1 - x) - r * x;
+    for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (f(mid) > 0) lo = mid; else hi = mid; }
+    const x = (lo + hi) / 2, inflow = a * c * x * g / (g + a * c * x), leave = k ? stages / eipDays : 0;
+    const y = Array.from({ length: k }, (_, i) => inflow * Math.pow(leave / (leave + g), i) / (leave + g));
+    return { x, z: zOf(x), y };
+  };
+
+  M.solveRM = function ({ times, m, a, g, b = M.TRANSMISSION.b, c = M.TRANSMISSION.c, r = M.TRANSMISSION.r,
+                          x0 = 0.01, z0 = 0.001, h = 0.25, eipDays = null, stages = 4, start = null }) {
     const k = eipDays === null ? 0 : stages;
     const f = (t, s) => {
       const mt = M.interp(times, m, t), at = M.interp(times, a, t), gt = M.interp(times, g, t);
@@ -71,9 +88,11 @@
       const dy = y.map((v, i) => (i === 0 ? at * c * x * (1 - ySum - z) : leave * y[i - 1]) - (gt + leave) * v);
       return [dx, ...dy, leave * y[k - 1] - gt * z];
     };
-    const y0 = k ? new Array(k).fill(Number.isFinite(eipDays) ? g[0] * eipDays * z0 / k : 0) : [];
-    let s = [x0, ...y0, z0], t = times[0];
-    const xs = [x0], zs = [z0];
+    const st = start === "equilibrium" ? M.rmEquilibrium(m[0], a[0], g[0], b, c, r, eipDays, stages) : null;
+    const xStart = st ? st.x : x0, zStart = st ? st.z : z0;
+    const y0 = !k ? [] : st ? st.y : new Array(k).fill(Number.isFinite(eipDays) ? g[0] * eipDays * z0 / k : 0);
+    let s = [xStart, ...y0, zStart], t = times[0];
+    const xs = [xStart], zs = [zStart];
     const add = (u, v, w) => u.map((ui, i) => ui + w * v[i]);
     for (let j = 1; j < times.length; j++) {
       while (t < times[j] - 1e-9) {
@@ -90,9 +109,9 @@
   };
 
   // The demo site of simulate_epiwave_data(): seasonal m, ITN ramp to `itnMax`
-  M.stage1Site = function ({ nTimes = 48, baselineM = 2, amplitude = 0.6, baselineA = 0.3,
-                             baselineG = 0.1, itnMax = 0.7, susceptibility = 0.8, b = 0.8, c = 0.8, r = 1 / 7,
-                             eipDays = null }) {
+  M.stage1Site = function ({ nTimes = 48, baselineM = 0.2, amplitude = 0.6, baselineA = 0.3,
+                             baselineG = 0.1, itnMax = 0.7, susceptibility = 0.8, b = M.TRANSMISSION.b,
+                             c = M.TRANSMISSION.c, r = M.TRANSMISSION.r, eipDays = M.TRANSMISSION.eipDays }) {
     const times = Array.from({ length: nTimes + 1 }, (_, i) => i * 30);
     const m = [], a = [], g = [];
     times.forEach((t, i) => {
@@ -100,10 +119,10 @@
       const adj = M.applyItn(M.seasonalM(t, baselineM, amplitude), baselineA, baselineG, cov, susceptibility);
       m.push(adj.m); a.push(adj.a); g.push(adj.g);
     });
-    return { times, m, a, g, ...M.solveRM({ times, m, a, g, b, c, r, eipDays }) };
+    return { times, m, a, g, ...M.solveRM({ times, m, a, g, b, c, r, eipDays, start: "equilibrium" }) };
   };
 
-  M.R0 = (m, a, b, c, g, r) => (m * a * a * b * c) / (g * r);
+  M.R0 = (m, a, b, c, g, r, eipDays = null) => (m * a * a * b * c) / (g * r) * (eipDays === null ? 1 : M.eipSurvival(g, eipDays));
   // Equilibrium human prevalence: x* = (R0 - 1) / (R0 + a c / g)
   M.xStar = (m, a, b, c, g, r) => {
     const R0 = M.R0(m, a, b, c, g, r);

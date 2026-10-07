@@ -64,6 +64,17 @@ PRIORS <- list(
   phi      = list(meanlog = 0.5, sdlog = 0.5)            # spatial lengthscale
 )
 
+# Transmission constants held fixed everywhere, from the literature:
+#   b, c  0.5 each (Smith & McKenzie 2004, Malar J 3:13; Smith et al. 2007,
+#         PLoS Biol 5:e42, "agrees with direct-feeding experiments")
+#   r     1/180 per day: untreated infections last about six months
+#         (Smith et al. 2005, Nature 438:492)
+#   eip   10 days: Gething et al. (2011) degree-day EIP at 27 C, inside the
+#         8.8-16 day range of Stopard et al. (2021). With four exposed stages the
+#         share surviving it is 0.41 against the exact exp(-1) = 0.37, so R0 is
+#         about 10% high.
+TRANSMISSION <- list(b = 0.5, c = 0.5, r = 1/180, eip_days = 10)
+
 I_STAR_FLOOR <- 1e-6   # keeps log(I*) finite where the ODE gives z ~ 0
 DAYS_PER_STEP <- 30    # one model time step ("month") = 30 days, for the ODE and the kernel
 MAX_DETECT_DAYS <- 30  # how long an infection stays detectable by the test
@@ -79,7 +90,7 @@ MAX_DETECT_DAYS <- 30  # how long an infection stays detectable by the test
 
 # Mosquito-to-human ratio m, with two rainy seasons a year (East Africa).
 # The same seasonal curve is used at every site.
-get_fixed_m <- function(time, location, baseline_m = 2.0,
+get_fixed_m <- function(time, location, baseline_m = 0.2,
                         seasonal_amplitude = 0.5, phase_shift = 0) {
   year <- time / 365
   seasonal <- 1 + seasonal_amplitude *
@@ -190,14 +201,41 @@ ross_macdonald_eip_ode <- function(t, state, parms) {
   list(c(dx_dt, dy_dt, dz_dt))
 }
 
+# Steady state of the model with parameters held constant. Infected mosquitoes
+# enter the exposed classes at F = acx g / (g + acx); a share S of them survive
+# the EIP, so z* = S acx / (acx + g). x* then solves m a b z* (1 - x) = r x.
+# Returns x, z and the exposed classes y (NULL without an EIP); all zero when
+# R0 <= 1.
+rm_equilibrium <- function(m, a, g, b, c, r, eip_days = NULL, stages = 4) {
+  S <- if (is.null(eip_days)) 1 else eip_survival(g, eip_days, stages)
+  z_of <- function(x) S * a * c * x / (a * c * x + g)
+  if (m * a^2 * b * c * S / (g * r) <= 1) {
+    return(list(x = 0, z = 0, y = if (is.null(eip_days)) NULL else rep(0, stages)))
+  }
+  x <- uniroot(function(x) m * a * b * z_of(x) * (1 - x) - r * x,
+               c(1e-12, 1 - 1e-12), tol = 1e-14)$root
+  y <- NULL
+  if (!is.null(eip_days)) {
+    inflow <- a * c * x * g / (g + a * c * x)
+    leave <- stages / eip_days
+    y <- inflow * (leave / (leave + g))^(seq_len(stages) - 1) / (leave + g)
+  }
+  list(x = x, z = z_of(x), y = y)
+}
+
 # Solve the ODE once per site (no inference here: this is the point of the
 # two-stage design). Returns x and z as [n_sites x n_times].
+#   start = NULL           begin at x0, z0
+#   start = "equilibrium"  begin each site at the steady state of its month-0
+#                          parameters (needed when infections last months)
 #   eip_days = NULL    no incubation period (the 2-state model above)
 #   eip_days = number or [n_sites x n_times] matrix, e.g. eip_gething(temperature)
 solve_ross_macdonald_multi_site <- function(m_matrix, a_matrix, g_matrix, times,
-                                            b = 0.8, c = 0.8, r = 1/7,
+                                            b = TRANSMISSION$b, c = TRANSMISSION$c,
+                                            r = TRANSMISSION$r,
                                             x0 = 0.01, z0 = 0.001,
-                                            eip_days = NULL, eip_stages = 4) {
+                                            eip_days = NULL, eip_stages = 4,
+                                            start = NULL) {
   stopifnot(identical(dim(m_matrix), dim(a_matrix)),
             identical(dim(m_matrix), dim(g_matrix)),
             ncol(m_matrix) == length(times))
@@ -212,16 +250,21 @@ solve_ross_macdonald_multi_site <- function(m_matrix, a_matrix, g_matrix, times,
                   a = approxfun(times, a_matrix[site, ], rule = 2),
                   g = approxfun(times, g_matrix[site, ], rule = 2),
                   b = b, c = c, r = r)
+    st <- if (is.null(start)) list(x = x0, z = z0, y = NULL) else if (identical(start, "equilibrium"))
+      rm_equilibrium(m_matrix[site, 1], a_matrix[site, 1], g_matrix[site, 1], b, c, r,
+                     eip_days = if (is.null(eip_days)) NULL else eip_days[site, 1], stages = eip_stages)
+      else start
+    st[] <- lapply(st, function(v) if (is.null(v)) NULL else unname(v))
     if (is.null(eip_days)) {
-      solution <- ode(y = c(x = x0, z = z0), times = times,
+      solution <- ode(y = c(x = st$x, z = st$z), times = times,
                       func = ross_macdonald_ode, parms = parms, method = "lsoda")
     } else {
       eip <- eip_days[site, ]
       parms$inv_eip <- approxfun(times, 1 / eip, rule = 2)
       parms$stages <- eip_stages
-      # start the exposed classes near balance with z0: about g n z0 in total
-      y0 <- if (is.finite(eip[1])) g_matrix[site, 1] * eip[1] * z0 / eip_stages else 0
-      state0 <- c(x = x0, setNames(rep(y0, eip_stages), paste0("y", seq_len(eip_stages))), z = z0)
+      # without a given start, put about g n z in the exposed classes
+      y0 <- if (!is.null(st$y)) st$y else if (is.finite(eip[1])) rep(g_matrix[site, 1] * eip[1] * st$z / eip_stages, eip_stages) else rep(0, eip_stages)
+      state0 <- c(x = st$x, setNames(y0, paste0("y", seq_len(eip_stages))), z = st$z)
       solution <- ode(y = state0, times = times,
                       func = ross_macdonald_eip_ode, parms = parms, method = "lsoda")
     }
@@ -367,8 +410,10 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
   }
   I_latent <- exp(log_I)
 
-  # Cases: population enters here, not in I*
-  expected_cases <- gamma_rr * I_latent * N_pop
+  # Cases: population enters here, not in I*. I is per person per day and cases
+  # are counted per step, so multiply by the days in a step (as epiwave.mapping
+  # does); gamma is then a true reporting proportion.
+  expected_cases <- gamma_rr * I_latent * N_pop * DAYS_PER_STEP
   if (is.null(observed_sites)) {
     cases <- as_data(observed_cases)
     distribution(cases) <- poisson(expected_cases)
@@ -402,11 +447,18 @@ fit_epiwave_gp <- function(observed_cases, I_star, N_pop, spatial_coords,
 # ==============================================================================
 
 # The truth the simulation study tries to recover.
+# baseline_m = 0.2 gives an equilibrium prevalence of 0.48 before nets (force of
+# infection about 1.9 per person per year, R0 3.3). As ITNs reach 70% it falls
+# towards Mozambique-like levels (2018 MIS: 39% nationally) and keeps declining:
+# by month 48 R0 is close to 1. Homogeneous Ross-Macdonald reaches this
+# prevalence with an EIR of only about 4 per year, below field estimates; Smith
+# et al. (2005) attribute the gap to heterogeneous biting.
 # gp_phi = 3 keeps the model sampleable. The prior predictive check shows phi
 # itself is not identifiable at this value (see the paper).
 TRUE_PARAMS <- list(
-  baseline_m = 2.0, baseline_a = 0.3, baseline_g = 1/10,
-  b = 0.8, c = 0.8, r = 1/7,
+  baseline_m = 0.2, baseline_a = 0.3, baseline_g = 1/10,
+  b = TRANSMISSION$b, c = TRANSMISSION$c, r = TRANSMISSION$r,
+  eip_days = TRANSMISSION$eip_days,
   population = 10000, reporting_rate = 0.1,
   itn_max = 0.7,              # ITN coverage reached by the final month
   itn_susceptibility = 0.8,   # fraction susceptible in bioassays (IR-cube scale)
@@ -489,8 +541,11 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48,
     )
     m <- adjusted$m; a <- adjusted$a; g <- adjusted$g
   }
+  # start each site at the steady state of its month-0 conditions: infections
+  # last months, so starting near zero would add years of artificial build-up
   ode <- solve_ross_macdonald_multi_site(m, a, g, times = times,
-                                         b = tp$b, c = tp$c, r = tp$r)
+                                         b = tp$b, c = tp$c, r = tp$r,
+                                         eip_days = tp$eip_days, start = "equilibrium")
   I_star <- compute_mechanistic_prediction(m, a, tp$b, ode$z)
 
   # True incidence = I* adjusted by the true residuals
@@ -502,7 +557,7 @@ simulate_epiwave_data <- function(n_sites = 10, n_times = 48,
   # Observations
   population <- matrix(tp$population, nrow = n_sites, ncol = length(times))
   set.seed(seeds[["cases"]])
-  expected_cases <- tp$reporting_rate * I_true * population
+  expected_cases <- tp$reporting_rate * I_true * population * DAYS_PER_STEP
   observed_cases <- matrix(rpois(length(expected_cases), expected_cases),
                            nrow = n_sites, ncol = length(times))
 

@@ -11,7 +11,7 @@ Sys.setenv(RETICULATE_PYTHON = "C:/Users/ernes/AppData/Local/r-miniconda/envs/r-
 args <- commandArgs(trailingOnly = TRUE)
 mode <- args[1]
 model_file <- if (mode == "freeze") args[2] else "R/epiwave-foi-model.R"
-ref_path <- "cache/refactor_reference_2026-10-06.rds"   # re-frozen after the resistance change; 2026-10-05 kept
+ref_path <- "cache/refactor_reference_2026-10-07.rds"   # re-frozen after the literature parameters and case units (earlier references kept)
 
 suppressPackageStartupMessages({
   source("R/greta_setup.R")

@@ -64,5 +64,36 @@ vary <- simulate_epiwave_data(n_sites = 6, n_times = 12, seed = 3L, site_variati
 check("default simulation: I* identical across sites", max(apply(flat$I_star, 2, sd)) == 0)
 check("site_variation: I* differs across sites", min(apply(vary$I_star[, -1], 2, sd)) > 0)
 
+# Equilibrium start: the ODE started at rm_equilibrium() stays there when the
+# parameters are held constant (with and without the EIP stages)
+yr <- seq(0, 360, by = 30)
+const <- function(v) matrix(v, 1, length(yr))
+for (eip in list(NULL, 10)) {
+  eq <- rm_equilibrium(m = 0.3, a = 0.3, g = 0.1, b = 0.5, c = 0.5, r = 1/180,
+                       eip_days = eip, stages = 4)
+  run <- solve_ross_macdonald_multi_site(const(0.3), const(0.3), const(0.1), yr,
+                                         b = 0.5, c = 0.5, r = 1/180,
+                                         eip_days = eip, start = eq)
+  check(sprintf("rm_equilibrium is a fixed point (EIP %s)", if (is.null(eip)) "off" else eip),
+        max(abs(run$x / eq$x - 1), abs(run$z / eq$z - 1)) < 1e-6)
+}
+
+# Literature ranges (docs/2026-10-07_parameter_ranges)
+tp <- TRUE_PARAMS
+eq0 <- rm_equilibrium(tp$baseline_m, tp$baseline_a, tp$baseline_g, tp$b, tp$c, tp$r, eip_days = tp$eip_days)
+check(sprintf("prevalence before nets is 0.48 (got %.3f)", eq0$x), abs(eq0$x - 0.48) < 0.01)
+sim <- simulate_epiwave_data(seed = 1010L)
+cat(sprintf("     I*: mean %.4f per day (%.2f per year), range %.1e to %.1e; ODE prevalence %.2f -> %.2f
+",
+            mean(sim$I_star), 365 * mean(sim$I_star), min(sim$I_star), max(sim$I_star),
+            mean(sim$x_star[, 1]), mean(sim$x_star[, ncol(sim$x_star)])))
+check("simulated I* is a realistic rate (0.001 to 0.01 per day on average)",
+      mean(sim$I_star) > 0.001 && mean(sim$I_star) < 0.01)
+check("I* never falls to the floor", min(sim$I_star) > 10 * I_STAR_FLOOR)
+exp_cases <- sim$true_params$reporting_rate * sim$I_true_mat * sim$pop_matrix * DAYS_PER_STEP
+cat(sprintf("     expected cases per site-month: median %.0f
+", median(exp_cases)))
+check("expected cases per site-month are informative (median > 20)", median(exp_cases) > 20)
+
 if (failed) { cat("\n", failed, "check(s) failed\n"); quit(status = 1) }
 cat("\nAll Stage 1 checks passed.\n")

@@ -82,7 +82,7 @@ run_prior_predictive <- function(n_draws = 500, n_sites = 10, n_times = 48,
                                  phi = p$phi, rho = p$theta)      # [n_sites x n_times]
     I   <- exp(p$alpha + log(I_star) + eps)                    # latent incidence
     prev <- 1 - exp(-(I %*% conv))                               # observed-scale prevalence
-    exp_cases <- p$gamma * I * N                                 # expected case counts
+    exp_cases <- p$gamma * I * N * DAYS_PER_STEP                 # expected cases per step
     data.frame(
       draw = i, phi = p$phi, sigma2 = p$sigma2, min_corr = p$min_corr,
       prev_median = median(prev), prev_max = max(prev),

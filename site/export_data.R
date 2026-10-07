@@ -55,14 +55,14 @@ refs <- list(
   q_daily = default_q_daily(0:35),
   q_monthly = q_monthly(0:3),
   ode_site1 = list(I_star = demo$I_star[1, ], x = demo$x_star[1, ], times = demo$times),
-  ode_eip10 = local({
+  ode_no_eip = local({
     times <- demo$times
     m <- get_fixed_m(times, "s", seasonal_amplitude = 0.6)
     a <- get_fixed_a(times, "s"); g <- get_fixed_g(times, "s")
     adj <- apply_interventions(m, a, g, itn_coverage = outer(0.7, seq(0, 1, length.out = length(times))),
                                itn_susceptibility = 0.8)
-    ode <- solve_ross_macdonald_multi_site(adj$m, adj$a, adj$g, times, eip_days = 10)
-    list(I_star = as.vector(compute_mechanistic_prediction(adj$m, adj$a, 0.8, ode$z)))
+    ode <- solve_ross_macdonald_multi_site(adj$m, adj$a, adj$g, times, start = "equilibrium")
+    list(I_star = as.vector(compute_mechanistic_prediction(adj$m, adj$a, TRANSMISSION$b, ode$z)))
   }),
   ar1 = list(rho = 0.7, innovations = innov, out = ar1(0.7, innov)),
   matern = list(d = c(0, 0.1, 0.5, 1), phi = 0.8,

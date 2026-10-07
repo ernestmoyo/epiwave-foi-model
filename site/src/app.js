@@ -170,16 +170,16 @@
   }
 
   function labStage1(root) {
-    const F = { m: v => v.toFixed(1), amp: v => v.toFixed(2), a: v => v.toFixed(2), g: v => v.toFixed(3), itn: v => Math.round(v * 100) + "%", res: v => Math.round(v * 100) + "%", eip: v => v === 0 ? "off" : v + " days" };
+    const F = { m: v => v.toFixed(2), amp: v => v.toFixed(2), a: v => v.toFixed(2), g: v => v.toFixed(3), itn: v => Math.round(v * 100) + "%", res: v => Math.round(v * 100) + "%", eip: v => v === 0 ? "off" : v + " days" };
     root.innerHTML = `
       <div class="controls">
-        ${slider("s1-m", "Baseline m (mosquitoes per person)", 0.2, 4, 0.1, 2, F.m)}
+        ${slider("s1-m", "Baseline m (mosquitoes per person)", 0.05, 1, 0.01, 0.2, F.m)}
         ${slider("s1-amp", "Seasonal amplitude", 0, 0.9, 0.05, 0.6, F.amp)}
         ${slider("s1-a", "Biting rate a (per day)", 0.1, 0.5, 0.01, 0.3, F.a)}
         ${slider("s1-g", "Mosquito death rate g (per day)", 0.05, 0.25, 0.005, 0.1, F.g)}
         ${slider("s1-itn", "ITN coverage reached by month 48", 0, 0.95, 0.05, 0.7, F.itn)}
         ${slider("s1-res", "Bioassay susceptibility (IR cube)", 0, 1, 0.05, 0.8, F.res)}
-        ${slider("s1-eip", "Extrinsic incubation period", 0, 15, 1, 0, F.eip)}
+        ${slider("s1-eip", "Extrinsic incubation period", 0, 16, 1, 10, F.eip)}
         <button class="btn" id="s1-reset">Reset to the study's values</button>
       </div>
       <div class="panels">
@@ -188,23 +188,23 @@
         <div id="s1-xz"></div>
         <h3>I* = m · a · b · z</h3>
         <div id="s1-istar"></div>
-        <p class="note">Solved with a fourth-order Runge–Kutta step of 6 hours; it matches R's deSolve output to within 0.002% (0.01% with an EIP). The EIP adds four exposed mosquito stages, so a share (1 + g n/4)<sup>−4</sup> of infected mosquitoes live to become infectious.</p>
+        <p class="note">Fixed values from the literature: b = c = 0.5, infections lasting about six months (r = 1/180), starting at the steady state of month 0. Solved with a fourth-order Runge–Kutta step of 6 hours; it matches R's deSolve output to within 0.002%. The EIP adds four exposed mosquito stages, so a share (1 + g n/4)<sup>−4</sup> of infected mosquitoes live to become infectious.</p>
       </div>`;
     const draw = () => {
       const p = { baselineM: val(root, "s1-m"), amplitude: val(root, "s1-amp"), baselineA: val(root, "s1-a"), baselineG: val(root, "s1-g"), itnMax: val(root, "s1-itn"), susceptibility: val(root, "s1-res"), eipDays: val(root, "s1-eip") || null };
       const s = M.stage1Site(p);
-      const R0 = M.R0(p.baselineM, p.baselineA, 0.8, 0.8, p.baselineG, 1 / 7) * (p.eipDays ? M.eipSurvival(p.baselineG, p.eipDays) : 1);
+      const T = M.TRANSMISSION, R0 = M.R0(p.baselineM, p.baselineA, T.b, T.c, p.baselineG, T.r, p.eipDays);
       const end = M.applyItn(p.baselineM, p.baselineA, p.baselineG, p.itnMax, p.susceptibility);
       const eipFactor = p.eipDays ? M.eipSurvival(p.baselineG, p.eipDays) : 1;
-      const R0end = M.R0(end.m, end.a, 0.8, 0.8, end.g, 1 / 7) * (p.eipDays ? M.eipSurvival(end.g, p.eipDays) : 1);
+      const R0end = M.R0(end.m, end.a, T.b, T.c, end.g, T.r, p.eipDays);
       $("#s1-stats", root).innerHTML = stat(R0.toFixed(2), "R₀ before nets") + stat(R0end.toFixed(2), "R₀ at final ITN coverage") +
-        stat(pct(eipFactor), "Mosquitoes surviving the EIP") + stat(fmt(s.Istar[48], 4), "I* in month 48");
+        stat(pct(eipFactor), "Mosquitoes surviving the EIP") + stat((365 * s.Istar[48]).toFixed(2), "Infections per person per year, month 48");
       $("#s1-xz", root).innerHTML = lineChart({ label: "Prevalence over time", xLabel: "Month", yLabel: "Proportion", yMin: 0, yMax: 1, series: [{ x: months, y: s.x, color: "--truth" }, { x: months, y: s.z, color: "--with", dash: true }] });
       $("#s1-istar", root).innerHTML = lineChart({ label: "I* over time", xLabel: "Month", yLabel: "Infections per person per day", series: [{ x: months, y: s.Istar, color: "--with" }] });
     };
     bindSliders(root, ["s1-m", "s1-amp", "s1-a", "s1-g", "s1-itn", "s1-res", "s1-eip"], { "s1-m": F.m, "s1-amp": F.amp, "s1-a": F.a, "s1-g": F.g, "s1-itn": F.itn, "s1-res": F.res, "s1-eip": F.eip }, draw);
     $("#s1-reset", root).addEventListener("click", () => {
-      [["s1-m", 2, F.m], ["s1-amp", 0.6, F.amp], ["s1-a", 0.3, F.a], ["s1-g", 0.1, F.g], ["s1-itn", 0.7, F.itn], ["s1-res", 0.8, F.res], ["s1-eip", 0, F.eip]].forEach(([id, v, f]) => { $("#" + id, root).value = v; $("#" + id + "-out", root).textContent = f(v); });
+      [["s1-m", 0.2, F.m], ["s1-amp", 0.6, F.amp], ["s1-a", 0.3, F.a], ["s1-g", 0.1, F.g], ["s1-itn", 0.7, F.itn], ["s1-res", 0.8, F.res], ["s1-eip", 10, F.eip]].forEach(([id, v, f]) => { $("#" + id, root).value = v; $("#" + id + "-out", root).textContent = f(v); });
       draw();
     });
     draw();
@@ -250,8 +250,8 @@
     const toI = v => Math.pow(10, v);
     root.innerHTML = `
       <div class="controls">
-        ${slider("p-log", "Incidence I (per person per day)", -4, -0.5, 0.05, -1.82, v => fmt(toI(v), 4))}
-        <p class="note">Incidence is held constant over the two months that contribute. The study's simulated I* spends most of its time between 0.05 and 0.4.</p>
+        ${slider("p-log", "Incidence I (per person per day)", -4, -0.5, 0.05, -2.52, v => fmt(toI(v), 4))}
+        <p class="note">Incidence is held constant over the two months that contribute. The simulator's I* now averages about 0.003 per day (about one infection per person per year).</p>
       </div>
       <div class="panels">
         <div class="stats" id="p-stats"></div>

@@ -37,7 +37,7 @@ window.EPIWAVE_CONTENT = {
       examples: [
         {
           title: "Reading the offset at one site",
-          body: "Replicate 1, site 1, month 24: the ODE gives I* ≈ 0.093 infections per person per day. If α = 0.11 and the fitted residual is ε = −0.4, then I = e<sup>0.11</sup> × 0.093 × e<sup>−0.4</sup> ≈ 1.12 × 0.093 × 0.67 ≈ 0.070. The mechanism over-predicts this site-month by about a third, and the GP absorbs the difference."
+          body: "Replicate 1 of the study (run with earlier, higher illustrative values), site 1, month 24: the ODE gives I* ≈ 0.093 infections per person per day. If α = 0.11 and the fitted residual is ε = −0.4, then I = e<sup>0.11</sup> × 0.093 × e<sup>−0.4</sup> ≈ 1.12 × 0.093 × 0.67 ≈ 0.070. The mechanism over-predicts this site-month by about a third, and the GP absorbs the difference."
         }
       ],
       selftest: [
@@ -55,8 +55,8 @@ window.EPIWAVE_CONTENT = {
       reading: [
         "Stage 1 follows two proportions over time at each site: x, the share of people infected, and z, the share of mosquitoes infectious. Mosquitoes bite at rate a; there are m mosquitoes per person; a bite from an infectious mosquito infects a person with probability b, and a bite on an infected person infects a mosquito with probability c. People recover at rate r; mosquitoes die at rate g.",
         "Only m, a and g vary in space and time. b, c and r are held fixed everywhere because they are not expected to vary much between places. m varies through the year with two rainy seasons; a and g are constant stand-ins until mapped surfaces replace them.",
-        "The quantity Stage 2 uses is the force of infection: the rate at which a susceptible person acquires infection, I* = m · a · b · z, per day. It is a rate, not a count; population enters later, in the case likelihood. Incidence among the whole population is I* (1 − x). The model treats I* as proportional to incidence, so the (1 − x) factor is absorbed by α and ε. In the simulation x reaches 0.77, so the two differ by a factor of 2 to 4.",
-        "In the simulation the parameters are illustrative. With m = 2, a = 0.3 and g = 0.1 the basic reproduction number is about 8 and equilibrium prevalence about two thirds, so I* runs mostly between 0.05 and 0.4 per person per day. Vector Atlas surfaces will replace these values."
+        "The quantity Stage 2 uses is the force of infection: the rate at which a susceptible person acquires infection, I* = m · a · b · z, per day. It is a rate, not a count; population enters later, in the case likelihood. Incidence among the whole population is I* (1 − x). The model treats I* as proportional to incidence, so the (1 − x) factor is absorbed by α and ε. In the simulation x is at most about 0.41, so the two differ by up to 1.7 times.",
+        "The fixed values come from the literature: b = c = 0.5 (Smith & McKenzie 2004; Smith et al. 2007), infections that last about six months, r = 1/180 per day (Smith et al. 2005), and a 10-day extrinsic incubation period (Gething et al. 2011; Stopard et al. 2021). With m = 0.2, a = 0.3 and g = 0.1, R₀ is about 3.3 and prevalence before nets is 0.48, close to Mozambique's 2018 survey (39% nationally). I* is then about one infection per person per year. Vector Atlas surfaces will replace m and a."
       ],
       derivations: [
         {
@@ -92,7 +92,7 @@ window.EPIWAVE_CONTENT = {
       examples: [
         {
           title: "The simulation's baseline values",
-          body: "m = 2, a = 0.3, b = c = 0.8, g = 0.1, r = 1/7. R₀ = 2 × 0.09 × 0.64 / (0.1 × 0.143) ≈ 8.06. x* = 7.06 / (8.06 + 2.4) ≈ 0.675. z* = 0.24 × 0.675 / (0.24 × 0.675 + 0.1) ≈ 0.62. I* at equilibrium = 2 × 0.3 × 0.8 × 0.62 ≈ 0.30 per person per day. These are toy values: two thirds of people infected is hyperendemic."
+          body: "m = 0.2, a = 0.3, b = c = 0.5, g = 0.1, r = 1/180, EIP 10 days. Surviving the EIP: (1 + 0.1 × 10 / 4)<sup>−4</sup> ≈ 0.41. R₀ = 0.2 × 0.09 × 0.25 × 0.41 / (0.1 / 180) ≈ 3.3. Solving the equilibrium gives x* ≈ 0.48 and z* ≈ 0.17, so I* = 0.2 × 0.3 × 0.5 × 0.17 ≈ 0.005 per person per day, about 1.9 infections per person per year. A homogeneous Ross-Macdonald model reaches this prevalence with an EIR of only about 4 per year, below field estimates; Smith et al. (2005) attribute the gap to heterogeneous biting."
         },
         {
           title: "Every simulated site has the same I*",
@@ -132,7 +132,7 @@ window.EPIWAVE_CONTENT = {
       examples: [
         {
           title: "70% ITN coverage, 80% susceptible",
-          body: "Effective coverage n′ = 0.7 × (1 − 0.46 × 0.2) = 0.636. m is multiplied by 1 − 0.636 × 0.5 = 0.682; a by 1 − 0.636 × 0.3 = 0.809; g by 1 + 0.636 × 0.3 = 1.191. R₀ scales by 0.682 × 0.809² / 1.191 ≈ 0.37, so the baseline 8.06 becomes about 3.0: still well above 1."
+          body: "Effective coverage n′ = 0.7 × (1 − 0.46 × 0.2) = 0.636. m is multiplied by 1 − 0.636 × 0.5 = 0.682; a by 1 − 0.636 × 0.3 = 0.809; g by 1 + 0.636 × 0.3 = 1.191. Higher mortality also means fewer mosquitoes survive the 10-day EIP (0.35 instead of 0.41). R₀ scales by 0.682 × 0.809² × 0.86 / 1.191 ≈ 0.32, so the baseline 3.3 becomes about 1.07: barely above 1, which is why prevalence keeps falling through the simulation."
         }
       ],
       selftest: [
@@ -207,7 +207,7 @@ window.EPIWAVE_CONTENT = {
         "Case counts are modelled as Poisson(γ · I · N): γ is the reporting rate and N the population. Cases alone see only the product e<sup>α</sup> · γ. Doubling e<sup>α</sup> and halving γ predicts exactly the same counts, so the two parameters form a ridge.",
         "Prevalence surveys break the tie. The share of people testing positive depends on how many were infected recently, through I, and not on reporting. Surveys therefore inform α on its own, and cases then inform γ.",
         "This only works if survey prevalence is computed from I, the GP-adjusted incidence. An earlier version used the ODE's prevalence x, which contains neither α nor ε; the survey data then said nothing about α and the ridge stayed.",
-        "Prevalence is built by summing recent infections, weighted by the chance a person infected d days ago still tests positive, q(d). epiwave.mapping uses that sum directly. This model uses p = 1 − exp(−Σ I q), the chance of at least one detectable infection. The two agree when the sum is small; the bounded form cannot exceed 1, which matters here because the simulation's incidence is high."
+        "Prevalence is built by summing recent infections, weighted by the chance a person infected d days ago still tests positive, q(d). epiwave.mapping uses that sum directly. This model uses p = 1 − exp(−Σ I q), the chance of at least one detectable infection. The two agree when the sum is small, and the bounded form cannot exceed 1. At the simulation's incidence they differ by about 3%. One open question: with infections that last six months, a 30-day detectability window gives survey prevalence of about 5% where the ODE says about 40%. Whether q should follow the infection's duration is for the next check-in."
       ],
       derivations: [
         {
@@ -245,8 +245,8 @@ window.EPIWAVE_CONTENT = {
           body: "q(d) rises over the first few days and decays to 0 by day 30. Integrated over 30-day steps the weights are w<sub>0</sub> ≈ 10.7 and w<sub>1</sub> ≈ 6.8: a person infected this month counts for about 10.7 days of detectability, one infected last month for 6.8."
         },
         {
-          title: "Why the bounded form matters here",
-          body: "At I = 0.15 per person per day in both months, Λ = 0.15 × (10.7 + 6.8) ≈ 2.6. The linear form gives a prevalence of 2.6, which is impossible. The bounded form gives 1 − e<sup>−2.6</sup> ≈ 0.93. At realistic incidence (say 0.005 per day) Λ ≈ 0.09 and the two forms differ by less than 5%."
+          title: "When the two forms part",
+          body: "At the simulation's average incidence, I = 0.003 per person per day, Λ = 0.003 × (10.7 + 6.8) ≈ 0.05: linear 0.053, bounded 0.051, a 3% difference. They only part at high incidence: at I = 0.15 per day Λ ≈ 2.6, the linear form gives an impossible 2.6 and the bounded form 0.93."
         }
       ],
       selftest: [
@@ -262,7 +262,7 @@ window.EPIWAVE_CONTENT = {
       lede: "Fifty replicates, two models, one honest reading.",
       minutes: 8,
       reading: [
-        "The study simulates fifty datasets from the full model (10 sites, 48 monthly steps, surveys at 30% of site-months) and fits each twice: with the I* offset and with I* = 0. Each fit used 4 chains of 2,000 samples after 2,000 warmup.",
+        "The study simulates fifty datasets from the full model (10 sites, 48 monthly steps, surveys at 30% of site-months) and fits each twice: with the I* offset and with I* = 0. Each fit used 4 chains of 2,000 samples after 2,000 warmup. That study used earlier illustrative values (7-day infections, b = c = 0.8, no EIP); the simulator now uses literature values, so the study needs rerunning.",
         "The headline comparison is the map. Median map error (RMSE of the latent incidence) is 2.4% lower with I*, and the I* model wins in 41 of the 50 replicates. That is a real but small gain.",
         "Three features of the design explain why it is small. I* is identical at every site, so it carries no spatial information. The map is scored only where data exist, and every site has cases every month, which a GP alone can fit. And surveys at 30% of site-months are far more frequent than real programmes, where a national survey comes roughly every three years.",
         "Convergence is the other caveat. α and γ mix acceptably (median R-hat 1.12 or below). φ, σ² and θ do not, in either model: median R-hat between 2 and 4. Until the sampler converges, those parameters say nothing about the model. The priors were reparameterised after this study and have not yet been tested at this scale.",
@@ -296,7 +296,6 @@ window.EPIWAVE_CONTENT = {
   // Open questions for the next check-in. Ticked state is kept in this browser only.
   ask: [
     { id: "q-link", ch: "likelihood", q: "Prevalence link: keep the bounded 1 − exp(−Σ I·q), or use the linear Σ I·q as in epiwave.mapping?" },
-    { id: "q-gamma", ch: "likelihood", q: "Should the case likelihood include days per month, so γ is a pure reporting proportion? Today I is per day and cases are per month." },
     { id: "q-headline", ch: "study", q: "Is map accuracy at held-out sites the right headline metric for the with/without I* comparison?" },
     { id: "q-eip", ch: "stage1", q: "EIP and temperature-dependent c: build my own, or reuse VCOM or Stopard–Churcher code?" },
     { id: "q-sparse", ch: "study", q: "If surveys become rare, is prevalence-only fitting the next scenario to simulate?" },
@@ -306,7 +305,8 @@ window.EPIWAVE_CONTENT = {
     { id: "q-hbr", ch: "stage1", q: "Are the interim abundance maps on an absolute human-biting-rate scale, and against which catch method were they calibrated?" },
     { id: "q-ir", ch: "interventions", q: "Is the Symons 0.46 retained-effect estimate acceptable as an interim mapping from IR-cube susceptibility to net effect, before a hut-trial mapping?" },
     { id: "q-survival", ch: "stage1", q: "Can I have the dehydrated g(T, H) survival function from the An. stephensi work, and the humidity biting lookup when it is ready?" },
-    { id: "q-eip-on", ch: "stage1", q: "Should the EIP be switched on in the simulation study? It lowers I* about threefold at the current values." },
+    { id: "q-window", ch: "likelihood", q: "With six-month infections, should the detectability kernel q follow the infection's duration (q(d) ∝ e^{−rd}) instead of a 30-day window, so survey prevalence matches the ODE?" },
+    { id: "q-params", ch: "stage1", q: "The simulation now uses literature values (r = 1/180, b = c = 0.5, EIP 10 days, m = 0.2), and the case likelihood multiplies by days per month. Agree before rerunning the study?" },
     { id: "q-centre", ch: "stage2", q: "Should α-centring be the default everywhere? It changes α to α + mean(ε)." }
   ],
 
@@ -315,7 +315,7 @@ window.EPIWAVE_CONTENT = {
       ["Human infection", "dx/dt = m a b z (1 − x) − r x"],
       ["Mosquito infection", "dz/dt = a c x (1 − z) − g z"],
       ["Mechanistic incidence rate", "I* = m · a · b · z", "compute_mechanistic_prediction()"],
-      ["Basic reproduction number", "R₀ = m a² b c / (g r)"],
+      ["Basic reproduction number", "R₀ = m a² b c S / (g r),  S = survival through the EIP"],
       ["Equilibrium prevalence", "x* = (R₀ − 1) / (R₀ + a c / g)"],
       ["ITN effect on m", "m (1 − n′ k),  n′ = n (1 − 0.46 (1 − q))", "apply_interventions()"],
       ["Surviving the EIP", "(1 + g n / 4)<sup>−4</sup> ≈ e<sup>−g n</sup>", "eip_survival()"]
@@ -327,7 +327,7 @@ window.EPIWAVE_CONTENT = {
       ["Stationary variance", "τ² = σ² / (1 − θ²)", "PRIORS$tau2"]
     ]},
     { group: "Likelihoods", items: [
-      ["Cases", "C ~ Poisson(γ · I · N)"],
+      ["Cases", "C ~ Poisson(γ · I · N · 30)  (I per day, cases per month)"],
       ["Detectable infections", "Λ<sub>t</sub> = Σ<sub>k</sub> I<sub>t−k</sub> w<sub>k</sub>", "build_detectability_matrix()"],
       ["Survey prevalence", "p = 1 − e<sup>−Λ</sup>"],
       ["Survey positives", "Y ~ Binomial(T, p)"]

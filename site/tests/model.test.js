@@ -27,7 +27,8 @@ check("ar1", M.ar1(refs.ar1.rho, refs.ar1.innovations), refs.ar1.out, 1e-12);
 const site = M.stage1Site({});
 check("Ross-Macdonald x (vs deSolve lsoda)", site.x, refs.ode_site1.x, 1e-4);
 check("I* (vs deSolve lsoda)", site.Istar, refs.ode_site1.I_star, 1e-4);
-check("I* with a 10-day EIP (vs deSolve lsoda)", M.stage1Site({ eipDays: 10 }).Istar, refs.ode_eip10.I_star, 1e-3);
+check("I* without the EIP (vs deSolve lsoda)", M.stage1Site({ eipDays: null }).Istar, refs.ode_no_eip.I_star, 1e-3);
+check("equilibrium prevalence before nets is 0.481", [M.rmEquilibrium(0.2, 0.3, 0.1, 0.5, 0.5, 1 / 180, 10).x], [0.4809], 1e-3);
 check("ITN effect retained at 0.8 susceptibility", [M.itnRetained(0.8)], [0.908], 1e-12);
 check("I* is identical at every site (finding F2)",
       replicate1.I_star.map(row => row[20]), replicate1.I_star.map(() => replicate1.I_star[0][20]), 1e-12);

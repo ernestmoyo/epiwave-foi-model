@@ -32,7 +32,8 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr); library(tidyr
   a <- get_fixed_a(times, locations, baseline_a = TRUE_PARAMS$baseline_a * scale_a)
   g <- get_fixed_g(times, locations, baseline_g = TRUE_PARAMS$baseline_g * scale_g)
   ode <- solve_ross_macdonald_multi_site(m, a, g, times = times,
-                                         b = TRUE_PARAMS$b, c = TRUE_PARAMS$c, r = TRUE_PARAMS$r)
+                                         b = TRUE_PARAMS$b, c = TRUE_PARAMS$c, r = TRUE_PARAMS$r,
+                                         eip_days = TRUE_PARAMS$eip_days, start = "equilibrium")
   compute_mechanistic_prediction(m, a, TRUE_PARAMS$b, ode$z)
 }
 
